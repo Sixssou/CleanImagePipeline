@@ -35,15 +35,15 @@ class FlorenceVisionClient:
         
         Args:
             image_url (str): URL of the image to analyze
-            prompt (str): Prompt to use for the analysis
+            prompt (str): Type of analysis (OCR_WITH_REGION, OBJECT_DETECTION, IMAGE_CAPTION)
         Returns:
             Dict[str, Any]: Model predictions and analysis results
         """
         try:
             result = self.client.predict(
-                "OCR_WITH_REGION",
-                image_url,
-                prompt,
+                prompt,          # Type d'analyse (OCR_WITH_REGION, etc.)
+                image_url,       # URL de l'image
+                "",             # Prompt additionnel (vide pour l'instant)
                 api_name="/process_image_from_url"
             )
             return result

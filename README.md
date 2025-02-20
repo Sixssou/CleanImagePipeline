@@ -37,6 +37,13 @@ pip install -r requirements.txt
 export OPENAI_API_GIT_AUTOMATOR_KEY='votre-clé-api-openai'
 export HUGGINGFACE_TOKEN='votre-token-huggingface'
 ```
+## Configuration
+
+Copiez `.env.example` vers `.env` et remplissez vos tokens :
+```bash
+cp .env.example .env
+# Éditez .env avec vos tokens
+```
 
 2. Vérifier que les variables sont bien définies :
 ```bash
