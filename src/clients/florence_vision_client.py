@@ -29,13 +29,13 @@ class FlorenceVisionClient:
             httpx_kwargs=httpx_kwargs
         )
 
-    def analyze_image(self, image_url: str) -> Dict[str, Any]:
+    def analyze_image(self, image_url: str, prompt: str) -> Dict[str, Any]:
         """
         Analyze an image using Florence-2 model.
         
         Args:
             image_url (str): URL of the image to analyze
-            
+            prompt (str): Prompt to use for the analysis
         Returns:
             Dict[str, Any]: Model predictions and analysis results
         """
@@ -43,7 +43,7 @@ class FlorenceVisionClient:
             result = self.client.predict(
                 "OCR_WITH_REGION",
                 image_url,
-                "",
+                prompt,
                 api_name="/process_image_from_url"
             )
             return result
