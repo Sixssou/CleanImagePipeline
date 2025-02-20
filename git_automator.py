@@ -32,7 +32,7 @@ class GitAutomator:
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "Tu es un assistant qui génère des messages de commit concis et descriptifs en anglais. Format: type(scope): description"},
+                    {"role": "system", "content": "Tu es un assistant qui génère des messages de commit concis et descriptifs en anglais. Format: scope: action détaillée (par exemple 'florence_vision_client: add prompt parameter in function analyze_image'). Évite les préfixes comme 'chore', 'feat', etc."},
                     {"role": "user", "content": f"Génère un message de commit pour ces modifications:\n{changes}"}
                 ]
             )
