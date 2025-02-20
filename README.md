@@ -1,33 +1,96 @@
+# Clean Image Pipeline
+
 ## 🎯 Features
 
-- **Watermark Removal**: Automatically remove watermarks from images using AI
-- **Background Removal**: Extract objects from their background with transparency
-- **Image Enhancement**: Optimize images for e-commerce (resolution, size, quality)
-- **Batch Processing**: Process multiple images simultaneously
-- **Shopify Integration**: Automatically upload processed images to your Shopify store
-- **Format Conversion**: Convert between different image formats (PNG, JPEG, WebP)
+- **Watermark Removal**: Automatiquement supprimer les filigranes des images avec l'IA
+- **Background Removal**: Extraire les objets de leur arrière-plan avec transparence
+- **Image Enhancement**: Optimiser les images pour l'e-commerce (résolution, taille, qualité)
+- **Batch Processing**: Traiter plusieurs images simultanément
+- **Git Automation**: Automatiser les commits Git avec GPT-3.5
+- **Format Conversion**: Convertir entre différents formats d'image (PNG, JPEG, WebP)
 
-## 📝 Configuration
+## 🛠 Prérequis
 
-1. Create a Hugging Face account and get your API token
-2. Set up your Shopify credentials
-3. Update the `config.py` file with your settings
+- Python 3.12+
+- Conda (pour la gestion de l'environnement)
+- Clés API requises :
+  - OpenAI API key (pour git_automator)
+  - HuggingFace API token (pour florence_vision_client)
 
-## 💻 Usage
+## 💻 Installation
 
-### Installation
+1. Créer et activer l'environnement conda :
+```bash
+conda create -n clean_image python=3.12
+conda activate clean_image
+```
 
+2. Installer les dépendances :
 ```bash
 pip install -r requirements.txt
 ```
 
-### Configuration
+## 📝 Configuration
 
+1. Configurer les variables d'environnement :
+```bash
+export OPENAI_API_GIT_AUTOMATOR_KEY='votre-clé-api-openai'
+export HUGGINGFACE_TOKEN='votre-token-huggingface'
+```
 
-## 🤝 Contributing
+2. Vérifier que les variables sont bien définies :
+```bash
+echo $OPENAI_API_GIT_AUTOMATOR_KEY
+echo $HUGGINGFACE_TOKEN
+```
 
-Contributions are welcome! Feel free to open an issue or submit a pull request.
+## 📁 Structure du Projet
 
-## 📄 License
+```
+CleanImagePipeline/
+├── src/
+│   └── clients/
+│       └── florence_vision_client.py   # Client pour Florence Vision
+├── git_automator.py                    # Automatisation des commits
+├── requirements.txt                    # Dépendances du projet
+└── README.md                          # Documentation
+```
 
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
+## 🚀 Utilisation
+
+### Git Automator
+
+```bash
+python git_automator.py
+```
+Cet outil va :
+- Ajouter les modifications (`git add .`)
+- Générer un message de commit avec GPT
+- Commiter les changements
+- Pousser vers le dépôt distant
+
+### Florence Vision Client
+
+```python
+from src.clients.florence_vision_client import FlorenceVisionClient
+
+client = FlorenceVisionClient(
+    hf_token='votre-token',
+    space_url='url-du-modele'
+)
+result = client.analyze_image('chemin/vers/image.jpg')
+```
+
+## 🤝 Contribution
+
+Les contributions sont les bienvenues ! Pour contribuer :
+
+1. Forkez le projet
+2. Créez une branche pour votre fonctionnalité
+3. Committez vos changements
+4. Poussez vers la branche
+5. Ouvrez une Pull Request
+
+## 📄 Licence
+
+Ce projet est sous licence MIT - voir le fichier [LICENSE.md](LICENSE.md) pour plus de détails.
