@@ -8,8 +8,8 @@ load_dotenv()
 def test_florence_vision():
     # Initialisation du client
     client = FlorenceVisionClient(
-        hf_token=os.getenv('HUGGINGFACE_TOKEN'),
-        space_url='https://cyrilar-Florence-2.hf.space'
+        hf_token=os.getenv('HF_TOKEN'),
+        space_url=os.getenv('HF_SPACE_FLORENCE')
     )
     
     # URL de test

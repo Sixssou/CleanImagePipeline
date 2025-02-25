@@ -1,0 +1,7 @@
+gradio_client
+httpx
+numpy
+Pillow
+loguru
+python-dotenv
+openai
