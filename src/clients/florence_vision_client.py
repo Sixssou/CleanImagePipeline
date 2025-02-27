@@ -1,6 +1,11 @@
 from gradio_client import Client
 import httpx
-from typing import Optional, Dict, Any
+from typing import Dict, Any
+from dotenv import load_dotenv
+from loguru import logger
+import os
+
+load_dotenv()
 
 class FlorenceVisionClient:
     """Client for interacting with Florence-2 Vision model on HuggingFace Spaces"""

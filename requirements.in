@@ -5,3 +5,6 @@ Pillow
 loguru
 python-dotenv
 openai
+gspread
+google-auth
+requests

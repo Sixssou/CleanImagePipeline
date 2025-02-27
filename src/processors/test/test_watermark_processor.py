@@ -1,15 +1,15 @@
 import os
-from dotenv import load_dotenv
 import requests
 from PIL import Image
 from io import BytesIO
+from dotenv import load_dotenv
 from loguru import logger
+import os
 
-from ..clients.florence_vision_client import FlorenceVisionClient
-from ..clients.lama_inpainting_client import LamaInpaintingClient
-from .watermark_processor import WatermarkRemovalProcessor
+from src.clients.florence_vision_client import FlorenceVisionClient
+from src.clients.lama_inpainting_client import LamaInpaintingClient
+from src.processors.watermark_processor import WatermarkRemovalProcessor
 
-# Charger les variables d'environnement
 load_dotenv()
 
 def download_image(url: str) -> Image.Image:
@@ -28,7 +28,6 @@ def test_watermark_removal():
     """Test simple du WatermarkRemovalProcessor"""
     
     # Configuration
-    test_image_url = "https://cdn.shopify.com/s/files/1/0898/8344/3543/files/image_60bd0406_cleaned.jpg"
     output_path = "tests/output/watermark_removal_test.png"
     
     try:
@@ -53,8 +52,8 @@ def test_watermark_removal():
         )
         
         # Téléchargement de l'image de test
-        logger.info(f"Téléchargement de l'image: {test_image_url}")
-        image = download_image(test_image_url)
+        logger.info(f"Téléchargement de l'image: {os.getenv('TEST_PHOTO_URL_1')}")
+        image = download_image(os.getenv('TEST_PHOTO_URL_1'))
         
         # Traitement de l'image
         logger.info("Début du traitement...")

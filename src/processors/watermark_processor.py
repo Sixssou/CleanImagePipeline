@@ -2,9 +2,13 @@ from typing import Optional, Tuple, List
 import numpy as np
 from PIL import Image, ImageDraw
 from loguru import logger
+from dotenv import load_dotenv
+import os
 
-from ..clients.florence_vision_client import FlorenceVisionClient
-from ..clients.lama_inpainting_client import LamaInpaintingClient
+load_dotenv()
+
+from src.clients.florence_vision_client import FlorenceVisionClient
+from src.clients.lama_inpainting_client import LamaInpaintingClient
 
 class WatermarkRemovalProcessor:
     """Processeur principal pour la suppression de watermarks"""

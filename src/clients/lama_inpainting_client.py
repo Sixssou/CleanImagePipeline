@@ -1,7 +1,11 @@
 from typing import Optional
 import numpy as np
 from gradio_client import Client
+from dotenv import load_dotenv
 from loguru import logger
+import os
+
+load_dotenv()
 
 class LamaInpaintingClient:
     """Client pour le modèle LaMa (Latent Matching) via l'API Gradio HuggingFace Spaces"""

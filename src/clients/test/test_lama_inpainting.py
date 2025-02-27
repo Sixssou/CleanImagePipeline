@@ -1,13 +1,13 @@
 import os
-from dotenv import load_dotenv
 import numpy as np
 from PIL import Image
+from dotenv import load_dotenv
 from loguru import logger
+import os
 
-from lama_inpainting_client import LamaInpaintingClient
-
-# Charger les variables d'environnement
 load_dotenv()
+
+from src.clients.lama_inpainting_client import LamaInpaintingClient
 
 def test_lama_inpainting():
     """Test simple du client LaMa"""
