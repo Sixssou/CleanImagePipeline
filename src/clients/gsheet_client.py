@@ -44,6 +44,24 @@ class GSheetClient:
             # Si la feuille n'a pas été trouvée par ID, on tente par nom
             self.spreadsheet = self.client.open(spreadsheet_name_or_id)
 
+    def test_connection(self, input_gheet_id: str, input_gheet_sheet: str) -> str:
+        """
+        Teste la connexion à la feuille Google Sheets et retourne un message
+        indiquant si la connexion a réussi ou échoué.
+        
+        :param input_gheet_id: ID de la feuille Google Sheets
+        :param input_gheet_sheet: Nom de l'onglet à tester
+        :return: Message de succès ou d'échec de la connexion
+        """
+        try:
+            self.spreadsheet = self.client.open_by_key(input_gheet_id)
+            self.spreadsheet.worksheet(input_gheet_sheet)
+            return f"Connexion réussie à la feuille '{input_gheet_sheet}' avec l'ID '{input_gheet_id}'."
+        except gspread.exceptions.APIError as e:
+            return f"Échec de la connexion à la feuille '{input_gheet_sheet}' avec l'ID '{input_gheet_id}': {e}"
+        except Exception as e:
+            return f"Une erreur inattendue est survenue lors de la connexion: {e}"
+
     def write_cells(self, worksheet_name: str, cell_range: str, values: list[list]):
         """
         Écrit les valeurs dans l'onglet / worksheet spécifié, 

@@ -11,7 +11,7 @@ load_dotenv()
 class ShopifyClient:
     """Client for interacting with Shopify API"""
 
-    def __init__(self, shop_name: str, access_token: str):
+    def __init__(self, shopify_api_key, shopify_password, shopify_store_name, shopify_base_url):
         """
         Initialize the Shopify client.
 
@@ -19,15 +19,18 @@ class ShopifyClient:
             shop_name (str): The name of the Shopify shop
             access_token (str): The access token for the Shopify API
         """
-        self.shop_name = shop_name
-        self.access_token = access_token
+        self.shopify_api_key = shopify_api_key
+        self.shopify_password = shopify_password
+        self.shopify_store_name = shopify_store_name
+        self.graphql_url = f"https://{shopify_store_name}/admin/api/{shopify_api_key}/graphql.json"
+
 
     def get_mime_type(file_path: str) -> str:
         """Détermine le MIME type (image/jpeg, image/png...) pour l'upload S3."""
         mime_type, _ = mimetypes.guess_type(file_path)
         return mime_type or "application/octet-stream"
 
-    def staged_uploads_create(file_paths):
+    def staged_uploads_create(self, file_paths):
         """
         Appelle la mutation GraphQL `stagedUploadsCreate` pour obtenir les URL
         de pré-upload (S3) associées à chaque fichier.
@@ -65,12 +68,12 @@ class ShopifyClient:
 
         headers = {
             "Content-Type": "application/json",
-            "X-Shopify-Access-Token": os.getenv("SHOPIFY_ACCESS_TOKEN")
+            "X-Shopify-Access-Token": self.shopify_api_key
         }
 
         try:
             resp = requests.post(
-                os.getenv("SHOPIFY_GRAPHQL_URL"),
+                self.graphql_url,
                 headers=headers,
                 json={"query": query, "variables": {"input": inputs}},
                 timeout=30
@@ -93,7 +96,7 @@ class ShopifyClient:
             return None
 
     ### AJOUT / MODIF ###
-    def file_create_no_preview(staged_target: dict, alt_text: str) -> bool:
+    def file_create_no_preview(self, staged_target: dict, alt_text: str) -> bool:
         """
         Appelle la mutation `fileCreate` pour déclarer le fichier
         (sans demander tout de suite la preview).
@@ -120,12 +123,12 @@ class ShopifyClient:
 
         headers = {
             "Content-Type": "application/json",
-            "X-Shopify-Access-Token": os.getenv("SHOPIFY_ACCESS_TOKEN")
+            "X-Shopify-Access-Token": self.shopify_api_key
         }
 
         try:
             resp = requests.post(
-                os.getenv("SHOPIFY_GRAPHQL_URL"),
+                self.graphql_url,
                 headers=headers,
                 json={"query": query, "variables": {"files": files_input}},
                 timeout=30
@@ -153,7 +156,7 @@ class ShopifyClient:
             logger.error(f"Exception lors de fileCreate: {e}")
             return False
 
-    def retrieve_file_by_alt(alt_value: str) -> str:
+    def retrieve_file_by_alt(self, alt_value: str) -> str:
         """
         Recherche dans les fichiers Shopify (jusqu'à 100 résultats), 
         triés par date de création (les plus récents en premier),
@@ -192,7 +195,7 @@ class ShopifyClient:
 
         headers = {
             "Content-Type": "application/json",
-            "X-Shopify-Access-Token": os.getenv("SHOPIFY_ACCESS_TOKEN")
+            "X-Shopify-Access-Token": self.shopify_api_key
         }
 
         try:
@@ -200,7 +203,7 @@ class ShopifyClient:
             # 2) Exécution de la requête GraphQL
             # --------------------
             resp = requests.post(
-                os.getenv("SHOPIFY_GRAPHQL_URL"),
+                self.graphql_url,
                 headers=headers,
                 json={"query": query, "variables": variables},
                 timeout=30
@@ -250,7 +253,7 @@ class ShopifyClient:
             logger.error(f"[ERROR] retrieve_file_by_alt Exception: {e}")
             return ""
 
-    def upload_file_to_shopify(cleaned_image_path: str) -> str:
+    def upload_file_to_shopify(self, cleaned_image_path: str) -> str:
         """
         Effectue l'upload du fichier `cleaned_image_path` dans l'onglet "Fichiers" Shopify,
         en deux étapes :
@@ -313,3 +316,29 @@ class ShopifyClient:
             logger.warning(f"Preview introuvable après 5 essais (alt={unique_alt})")
 
         return final_url
+
+    def test_connection(self, 
+                        input_shopify_domain: str, 
+                        input_shopify_api_version: str, 
+                        input_shopify_api_key: str) -> str:
+        """
+        Test the connection to the Shopify API and return a message
+        indicating whether the connection was successful or not.
+
+        Returns:
+            str: Success or error message.
+        """
+        url = f"https://{input_shopify_domain}/admin/api/{input_shopify_api_version}/shop.json"
+        headers = {
+            "Content-Type": "application/json",
+            "X-Shopify-Access-Token": input_shopify_api_key
+        }
+
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                return "Connexion réussie à l'API Shopify."
+            else:
+                return f"Échec de la connexion à l'API Shopify: {response.status_code} - {response.text}"
+        except Exception as e:
+            return f"Erreur lors de la tentative de connexion à l'API Shopify: {e}"

@@ -29,15 +29,22 @@ def initialize_clients():
     shopify_api_key = os.getenv("SHOPIFY_API_KEY")
     shopify_password = os.getenv("SHOPIFY_PASSWORD")
     shopify_store_name = os.getenv("SHOPIFY_STORE_NAME")
-    shopify_client = ShopifyClient(shopify_api_key, shopify_password, shopify_store_name)
+    shopify_base_url = os.getenv("SHOPIFY_BASE_URL")
+    shopify_client = ShopifyClient(shopify_api_key, 
+                                   shopify_password, 
+                                   shopify_store_name, 
+                                   shopify_base_url)
 
     # Initialisation du client WatermarkRemoval
     hf_token = os.getenv("HF_TOKEN")
-    space_url = os.getenv("SPACE_URL")
+    space_url = os.getenv("HF_SPACE_BG_REMOVAL")
     watermak_removal_client = WatermakRemovalClient(hf_token, space_url)
 
 def gsheet_test_connection(input_gheet_id: str, input_gheet_sheet: str):
-    pass
+    return gsheet_client.test_connection(input_gheet_id, input_gheet_sheet)
+
+def shopify_test_connection(input_shopify_domain: str, input_shopify_api_version: str, input_shopify_api_key: str, input_shopify_base_url: str):
+    return shopify_client.test_connection(input_shopify_domain, input_shopify_api_version, input_shopify_api_key, input_shopify_base_url)
 
 # Interface Gradio
 with gr.Blocks() as interfaces:
@@ -58,6 +65,26 @@ with gr.Blocks() as interfaces:
                 gsheet_test_connection,
                 inputs=[input_gheet_id, input_gheet_sheet],
                 outputs=[output_test_connection]
+            )
+        with gr.Tab("Shopify Client"):
+            with gr.Row():
+                with gr.Column():
+                    input_shopify_domain = gr.Textbox(label="Domaine de la boutique Shopify", value=os.getenv("SHOPIFY_STORE_DOMAIN"))
+                    input_shopify_api_version = gr.Textbox(label="Version de l'API Shopify", value=os.getenv("SHOPIFY_API_VERSION"))
+                    input_shopify_api_key = gr.Textbox(label="Shopify Token API Key", value=os.getenv("SHOPIFY_ACCESS_TOKEN"))
+                    input_shopify_base_url = gr.Textbox(label="Shopify Base URL", value=os.getenv("SHOPIFY_BASE_URL"))
+                    test_connection = gr.Button("Test Connection")
+                
+                with gr.Column():
+                    output_shopify_test_connection = gr.Textbox(label="Réponse du test", value="Réponse du test")
+            
+            test_connection.click(
+                shopify_test_connection,
+                inputs=[input_shopify_domain, 
+                        input_shopify_api_version,
+                        input_shopify_api_key,
+                        input_shopify_base_url],
+                outputs=[output_shopify_test_connection]
             )
         #gr.Image(label="Image sans arrière-plan", type="numpy")
         #threshold_detect = gr.Slider(minimum=0.0, maximum=1.0, value=0.85, step=0.05,label="Seuil de confiance")
