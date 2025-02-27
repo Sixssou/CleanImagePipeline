@@ -53,8 +53,16 @@ class WatermakRemovalClient:
         except Exception as e:
             raise Exception(f"Error detecting watermarks: {e}")
 
-    def remove_wm(self, image_url, threshold, max_bbox_percent, 
-                  remove_background_option, add_watermark_option, watermark):
+    def remove_wm(self, 
+                  image_url, 
+                  threshold, 
+                  max_bbox_percent, 
+                  remove_background_option, 
+                  add_watermark_option, 
+                  watermark,
+                  bbox_enlargement_factor,
+                  remove_watermark_iterations
+                  ):
         try:
             result = self.client.predict(
                 image_url,
@@ -63,6 +71,8 @@ class WatermakRemovalClient:
                 remove_background_option,
                 add_watermark_option,
                 watermark,
+                bbox_enlargement_factor,
+                remove_watermark_iterations,
                 api_name=os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_REMOVE_WATERMARKS_FROM_URL")
             )
             return result

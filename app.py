@@ -58,8 +58,22 @@ def detect_wm(image_url: str,
                                              max_bbox_percent, 
                                              bbox_enlargement_factor)
 
-def remove_wm(image_url: str, threshold: float, max_bbox_percent: float, bbox_enlargement_factor: float, remove_background_option: bool, add_watermark_option: bool, watermark: str):
-    return watermak_removal_client.remove_wm(image_url, threshold, max_bbox_percent, bbox_enlargement_factor, remove_background_option, add_watermark_option, watermark)
+def remove_wm(  image_url, 
+                threshold=0.85, 
+                max_bbox_percent=10.0, 
+                remove_background_option=False, 
+                add_watermark_option=False, 
+                watermark=None,
+                bbox_enlargement_factor=1.5,
+                remove_watermark_iterations=1):
+    return watermak_removal_client.remove_wm(image_url, 
+                                             threshold, 
+                                             max_bbox_percent, 
+                                             remove_background_option, 
+                                             add_watermark_option, 
+                                             watermark, 
+                                             bbox_enlargement_factor, 
+                                             remove_watermark_iterations)
 
 # Interface Gradio
 with gr.Blocks() as interfaces:
@@ -117,7 +131,6 @@ with gr.Blocks() as interfaces:
                     outputs=[output_remove_background]
                 )
             
-            # Ajout d'un deuxième élément identique dans l'accordéon
             with gr.Accordion("Watermark Detection"):
                 with gr.Row():
                     with gr.Column():
@@ -139,9 +152,47 @@ with gr.Blocks() as interfaces:
                             max_bbox_percent_watermark_detection,
                             bbox_enlargement_factor_watermark_detection],
                     outputs=[output_watermark_detection, 
-                             output_watermark_detection_mask]
-                )
-        #remove_background_option = gr.Checkbox(label="Supprimer l'arrière-plan", value=False)
+                             output_watermark_detection_mask])
+
+            with gr.Accordion("Remove Watermark"):
+                with gr.Row():
+                    with gr.Column():
+                        url_input = gr.Textbox(label="URL de l'image", value=os.getenv("TEST_PHOTO_URL_1"))
+                        threshold_url = gr.Slider(minimum=0.0, maximum=1.0, value=0.85,
+                                                label="Seuil de confiance")
+                        max_bbox_percent = gr.Slider(minimum=1, maximum=100, value=10, step=1,
+                                                label="Maximal bbox percent")
+                        bbox_enlargement_factor = gr.Slider(minimum=1, maximum=10, value=1.5, step=0.1,
+                                                label="Facteur d'agrandissement des bbox")
+                        remove_background_option = gr.Checkbox(label="Supprimer l'arrière-plan", value=False)
+                        add_watermark_option = gr.Checkbox(label="Ajoute un watermark", value=False)
+                        watermark = gr.Textbox(label="Watermark à ajouter", value="www.mybrand.com")
+                        remove_watermark_iterations = gr.Slider(minimum=1, maximum=10, value=1, step=1,
+                                                label="Nombre d'itérations d'inpainting")
+                        remove_url_btn = gr.Button("Supprimer le watermark depuis l'URL")
+                    with gr.Column():
+                        preview_remove_bg = gr.Image(label="Image sans BG", type="numpy")
+                        preview_detection = gr.Image(label="Detection Mask", type="numpy")
+                        inpainted_image = gr.Image(label="Image nettoyée", type="numpy")
+                        final_result = gr.Image(label="Image nettoyée avec WM", type="numpy")
+
+            remove_url_btn.click(
+                remove_wm,
+                inputs=[url_input, 
+                        threshold_url, 
+                        max_bbox_percent,
+                        remove_background_option, 
+                        add_watermark_option, 
+                        watermark, 
+                        bbox_enlargement_factor,
+                        remove_watermark_iterations],
+                outputs=[
+                    preview_remove_bg,
+                    preview_detection,
+                    inpainted_image,
+                    final_result
+                ]
+            )
 
 if __name__ == "__main__":
     initialize_clients()
