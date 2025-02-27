@@ -18,7 +18,7 @@ def initialize_clients():
     """
     Initialise et retourne les clients nécessaires pour l'application.
     """
-    global gsheet_client, shopify_client, watermark_removal_client
+    global gsheet_client, shopify_client, watermak_removal_client
     
     # Initialisation du client GSheet
     credentials_file = os.getenv("GSHEET_CREDENTIALS_FILE")
@@ -37,7 +37,7 @@ def initialize_clients():
 
     # Initialisation du client WatermarkRemoval
     hf_token = os.getenv("HF_TOKEN")
-    space_url = os.getenv("HF_SPACE_BG_REMOVAL")
+    space_url = os.getenv("HF_SPACE_WATERMAK_REMOVAL")
     watermak_removal_client = WatermakRemovalClient(hf_token, space_url)
 
 def gsheet_test_connection(input_gheet_id: str, input_gheet_sheet: str):
@@ -45,6 +45,21 @@ def gsheet_test_connection(input_gheet_id: str, input_gheet_sheet: str):
 
 def shopify_test_connection(input_shopify_domain: str, input_shopify_api_version: str, input_shopify_api_key: str, input_shopify_base_url: str):
     return shopify_client.test_connection(input_shopify_domain, input_shopify_api_version, input_shopify_api_key, input_shopify_base_url)
+
+def remove_background(input_image_url_remove_background: str):
+    return watermak_removal_client.remove_bg(input_image_url_remove_background)
+
+def detect_wm(image_url: str, 
+              threshold: float, 
+              max_bbox_percent: float, 
+              bbox_enlargement_factor: float):
+    return watermak_removal_client.detect_wm(image_url, 
+                                             threshold, 
+                                             max_bbox_percent, 
+                                             bbox_enlargement_factor)
+
+def remove_wm(image_url: str, threshold: float, max_bbox_percent: float, bbox_enlargement_factor: float, remove_background_option: bool, add_watermark_option: bool, watermark: str):
+    return watermak_removal_client.remove_wm(image_url, threshold, max_bbox_percent, bbox_enlargement_factor, remove_background_option, add_watermark_option, watermark)
 
 # Interface Gradio
 with gr.Blocks() as interfaces:
@@ -86,8 +101,46 @@ with gr.Blocks() as interfaces:
                         input_shopify_base_url],
                 outputs=[output_shopify_test_connection]
             )
-        #gr.Image(label="Image sans arrière-plan", type="numpy")
-        #threshold_detect = gr.Slider(minimum=0.0, maximum=1.0, value=0.85, step=0.05,label="Seuil de confiance")
+        with gr.Tab("Watermak Removal Client"):
+            with gr.Accordion("Background Removal"):
+                with gr.Row():
+                    with gr.Column():
+                        input_image_url_remove_background = gr.Textbox(label="Url de l'image", value=os.getenv("TEST_PHOTO_URL_1"))
+                        test_remove_background = gr.Button("Remove background from image")
+                    
+                    with gr.Column():
+                        output_remove_background = gr.Image(label="Image sans arrière-plan", type="numpy")
+                
+                test_remove_background.click(
+                    remove_background,
+                    inputs=[input_image_url_remove_background],
+                    outputs=[output_remove_background]
+                )
+            
+            # Ajout d'un deuxième élément identique dans l'accordéon
+            with gr.Accordion("Watermark Detection"):
+                with gr.Row():
+                    with gr.Column():
+                        input_image_url_watermark_detection = gr.Textbox(label="Url de l'image", value=os.getenv("TEST_PHOTO_URL_1"))
+                        threshold_watermark_detection = gr.Slider(minimum=0.0, maximum=1.0, value=0.85, step=0.05,label="Seuil de confiance")
+                        max_bbox_percent_watermark_detection = gr.Slider(minimum=1, maximum=100, value=10, step=1,
+                                              label="Maximal bbox percent")
+                        bbox_enlargement_factor_watermark_detection = gr.Slider(minimum=1, maximum=100, value=10, step=1,
+                                              label="Facteur d'agrandissement des bbox")
+                        test_watermark_detection = gr.Button("Detect watermarks from image")
+                    with gr.Column():
+                        output_watermark_detection = gr.Image(label="Image avec détection", type="numpy")
+                        output_watermark_detection_mask = gr.Image(label="Masque de détection", type="numpy")
+                
+                test_watermark_detection.click(
+                    detect_wm,
+                    inputs=[input_image_url_watermark_detection, 
+                            threshold_watermark_detection,
+                            max_bbox_percent_watermark_detection,
+                            bbox_enlargement_factor_watermark_detection],
+                    outputs=[output_watermark_detection, 
+                             output_watermark_detection_mask]
+                )
         #remove_background_option = gr.Checkbox(label="Supprimer l'arrière-plan", value=False)
 
 if __name__ == "__main__":
