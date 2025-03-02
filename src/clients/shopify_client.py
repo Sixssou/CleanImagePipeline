@@ -11,7 +11,7 @@ load_dotenv()
 class ShopifyClient:
     """Client for interacting with Shopify API"""
 
-    def __init__(self, shopify_api_key, shopify_password, shopify_store_name, shopify_base_url):
+    def __init__(self, shopify_api_version, shopify_access_token, shopify_store_name):
         """
         Initialize the Shopify client.
 
@@ -19,13 +19,18 @@ class ShopifyClient:
             shop_name (str): The name of the Shopify shop
             access_token (str): The access token for the Shopify API
         """
-        self.shopify_api_key = shopify_api_key
-        self.shopify_password = shopify_password
+        self.shopify_api_version = shopify_api_version
+        self.shopify_access_token = shopify_access_token
         self.shopify_store_name = shopify_store_name
-        self.graphql_url = f"https://{shopify_store_name}/admin/api/{shopify_api_key}/graphql.json"
+        self.graphql_url = f"https://{shopify_store_name}/admin/api/{shopify_api_version}/graphql.json"
+
+        logger.info(f"Shopify API version: {self.shopify_api_version}")
+        logger.info(f"Shopify Access Token: {self.shopify_access_token}")
+        logger.info(f"Shopify Store Name: {self.shopify_store_name}")
+        logger.info(f"GraphQL URL: {self.graphql_url}")
 
 
-    def get_mime_type(file_path: str) -> str:
+    def get_mime_type(self, file_path: str) -> str:
         """Détermine le MIME type (image/jpeg, image/png...) pour l'upload S3."""
         mime_type, _ = mimetypes.guess_type(file_path)
         return mime_type or "application/octet-stream"
@@ -39,7 +44,7 @@ class ShopifyClient:
         """
         inputs = []
         for fp in file_paths:
-            mime_type = ShopifyClient.get_mime_type(fp)
+            mime_type = self.get_mime_type(fp)
             inputs.append({
                 "resource": "FILE",
                 "filename": os.path.basename(fp),
@@ -68,7 +73,7 @@ class ShopifyClient:
 
         headers = {
             "Content-Type": "application/json",
-            "X-Shopify-Access-Token": self.shopify_api_key
+            "X-Shopify-Access-Token": self.shopify_access_token
         }
 
         try:
@@ -123,7 +128,7 @@ class ShopifyClient:
 
         headers = {
             "Content-Type": "application/json",
-            "X-Shopify-Access-Token": self.shopify_api_key
+            "X-Shopify-Access-Token": self.shopify_access_token
         }
 
         try:
@@ -195,7 +200,7 @@ class ShopifyClient:
 
         headers = {
             "Content-Type": "application/json",
-            "X-Shopify-Access-Token": self.shopify_api_key
+            "X-Shopify-Access-Token": self.shopify_access_token
         }
 
         try:
@@ -262,7 +267,8 @@ class ShopifyClient:
         3) retrieve_file_by_alt (plusieurs tentatives)
         Retourne l'URL finale ou "" si échec.
         """
-        staged_targets = ShopifyClient.staged_uploads_create([cleaned_image_path])
+        logger.info(f"Uploading file to Shopify: {cleaned_image_path}")
+        staged_targets = self.staged_uploads_create([cleaned_image_path])
         if not staged_targets or len(staged_targets) < 1:
             return ""
 
@@ -296,7 +302,7 @@ class ShopifyClient:
         ### AJOUT / MODIF ###
         # 2) fileCreate (sans preview) + alt unique
         unique_alt = f"image_{uuid.uuid4()}"
-        success = ShopifyClient.file_create_no_preview(staged_target, unique_alt)
+        success = self.file_create_no_preview(staged_target, unique_alt)
         if not success:
             # Echec de fileCreate => on arrête
             return ""
@@ -305,7 +311,7 @@ class ShopifyClient:
         final_url = ""
         for attempt in range(10):
             logger.info(f"Tentative de récupération de l'URL (alt={unique_alt}), essai {attempt+1}/5")
-            final_url = ShopifyClient.retrieve_file_by_alt(unique_alt)
+            final_url = self.retrieve_file_by_alt(unique_alt)
             if final_url:
                 break
             time.sleep(2)  # Attendre 2s avant de réessayer

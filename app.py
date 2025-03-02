@@ -26,25 +26,26 @@ def initialize_clients():
     gsheet_client = GSheetClient(credentials_file, spreadsheet_id)
 
     # Initialisation du client Shopify
-    shopify_api_key = os.getenv("SHOPIFY_API_KEY")
-    shopify_password = os.getenv("SHOPIFY_PASSWORD")
-    shopify_store_name = os.getenv("SHOPIFY_STORE_NAME")
-    shopify_base_url = os.getenv("SHOPIFY_BASE_URL")
+    shopify_api_key = os.getenv("SHOPIFY_API_VERSION")
+    shopify_password = os.getenv("SHOPIFY_ACCESS_TOKEN")
+    shopify_store_name = os.getenv("SHOPIFY_STORE_DOMAIN")
     shopify_client = ShopifyClient(shopify_api_key, 
                                    shopify_password, 
-                                   shopify_store_name, 
-                                   shopify_base_url)
+                                   shopify_store_name)
 
     # Initialisation du client WatermarkRemoval
-    hf_token = os.getenv("HF_TOKEN")
+    """hf_token = os.getenv("HF_TOKEN")
     space_url = os.getenv("HF_SPACE_WATERMAK_REMOVAL")
-    watermak_removal_client = WatermakRemovalClient(hf_token, space_url)
+    watermak_removal_client = WatermakRemovalClient(hf_token, space_url)"""
 
 def gsheet_test_connection(input_gheet_id: str, input_gheet_sheet: str):
     return gsheet_client.test_connection(input_gheet_id, input_gheet_sheet)
 
-def shopify_test_connection(input_shopify_domain: str, input_shopify_api_version: str, input_shopify_api_key: str, input_shopify_base_url: str):
-    return shopify_client.test_connection(input_shopify_domain, input_shopify_api_version, input_shopify_api_key, input_shopify_base_url)
+def shopify_test_connection(input_shopify_domain: str, input_shopify_api_version: str, input_shopify_api_key: str):
+    return shopify_client.test_connection(input_shopify_domain, 
+                                          input_shopify_api_version, 
+                                          input_shopify_api_key, 
+)
 
 def remove_background(input_image_url_remove_background: str):
     return watermak_removal_client.remove_bg(input_image_url_remove_background)
@@ -75,6 +76,33 @@ def remove_wm(  image_url,
                                              bbox_enlargement_factor, 
                                              remove_watermark_iterations)
 
+def clean_image_pipeline(image_count: int, sheet_name: str):
+    """
+    Fonction pour lancer le pipeline de nettoyage des images.
+    """
+    data = gsheet_client.read_cells(sheet_name, f"A1:C{image_count}")
+    
+    for row in data:
+        lien_image_source = row[0]
+        lien_image_traitee = row[1]
+        supprimer_background = row[2].upper() == 'TRUE'
+        logger.info(f"Lien image source : {lien_image_source}")
+        logger.info(f"Lien image traitee : {lien_image_traitee}")
+        logger.info(f"Supprimer background : {supprimer_background}")
+        if not lien_image_traitee:
+            preview_remove_bg, preview_detection, inpainted_image, final_result = watermak_removal_client.remove_wm(lien_image_source, 
+                                          threshold=0.85, 
+                                          max_bbox_percent=10.0, 
+                                          remove_background_option=supprimer_background, 
+                                          add_watermark_option=True, 
+                                          watermark="www.inflatable-store.com", 
+                                          bbox_enlargement_factor=1.5, 
+                                          remove_watermark_iterations=1)
+            logger.info(f"Image nettoyée : {final_result}")
+            lien_image_traitee = shopify_client.upload_file_to_shopify(final_result)
+            logger.info(f"Image nettoyée et uploadée : {lien_image_traitee}")
+    return data
+
 # Interface Gradio
 with gr.Blocks() as interfaces:
     gr.Markdown("# Détection et Suppression de Watermark avec watermak-removal")
@@ -101,7 +129,6 @@ with gr.Blocks() as interfaces:
                     input_shopify_domain = gr.Textbox(label="Domaine de la boutique Shopify", value=os.getenv("SHOPIFY_STORE_DOMAIN"))
                     input_shopify_api_version = gr.Textbox(label="Version de l'API Shopify", value=os.getenv("SHOPIFY_API_VERSION"))
                     input_shopify_api_key = gr.Textbox(label="Shopify Token API Key", value=os.getenv("SHOPIFY_ACCESS_TOKEN"))
-                    input_shopify_base_url = gr.Textbox(label="Shopify Base URL", value=os.getenv("SHOPIFY_BASE_URL"))
                     test_connection = gr.Button("Test Connection")
                 
                 with gr.Column():
@@ -111,8 +138,7 @@ with gr.Blocks() as interfaces:
                 shopify_test_connection,
                 inputs=[input_shopify_domain, 
                         input_shopify_api_version,
-                        input_shopify_api_key,
-                        input_shopify_base_url],
+                        input_shopify_api_key],
                 outputs=[output_shopify_test_connection]
             )
         with gr.Tab("Watermak Removal Client"):
@@ -192,6 +218,22 @@ with gr.Blocks() as interfaces:
                     inpainted_image,
                     final_result
                 ]
+            )
+        with gr.Tab("Clean Image Pipeline"):
+            with gr.Row():
+                with gr.Column():
+                    image_count = gr.Slider(minimum=1, maximum=1000, value=1, label="Nombre d'images")           
+                    sheet_name = gr.Textbox(label="Onglet Source", value=os.getenv("GSHEET_SHEET_PHOTOS_MAC_TAB"))
+                    launch_pipeline = gr.Button("Lancer le traitement")
+                
+                with gr.Column():
+                    output_pipeline = gr.Textbox(label="Réponse du test", value="Réponse du test")
+            
+            launch_pipeline.click(
+                clean_image_pipeline,
+                inputs=[image_count, 
+                        sheet_name],
+                outputs=[output_pipeline]
             )
 
 if __name__ == "__main__":
