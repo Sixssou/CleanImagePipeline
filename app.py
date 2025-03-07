@@ -93,7 +93,7 @@ def remove_wm(image_url,
               bbox_enlargement_factor=1.5,
               remove_watermark_iterations=1):
     """
-    Fonction wrapper pour appeler la méthode remove_wm du client WatermakRemovalClient.
+    Fonction wrapper pour appeler la méthode remove_wm du client WatermarkRemovalClient.
     
     Returns:
         Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: Tuple contenant (image sans fond, masque de détection, image inpainted, image finale)
@@ -185,8 +185,6 @@ def process_single_image(lien_image_source, supprimer_background=False):
 def clean_image_pipeline_manual(image_count: int, sheet_name_value: str):
     """
     Version modifiée du pipeline de nettoyage des images avec étape manuelle.
-    Étape 1: Détection et suppression automatique des watermarks avec remove_wm
-    Étape 2: Affichage de l'image résultante pour édition manuelle des zones non détectées
     """
     global sheet_name
     sheet_name = sheet_name_value  # Stocker le nom de l'onglet dans la variable globale
@@ -210,199 +208,178 @@ def clean_image_pipeline_manual(image_count: int, sheet_name_value: str):
         
         if not lien_image_traitee and lien_image_source:
             try:
-                # Étape 1: Détection et suppression automatique des watermarks avec remove_wm
+                # Charger l'image de test au lieu d'appeler remove_wm
+                test_image_path = r"C:\Users\matrix\Downloads\TestRmWMimage.png"
+                if os.path.exists(test_image_path):
+                    try:
+                        inpainted_image = cv2.imread(test_image_path)
+                        # Convertir de BGR à RGB (OpenCV charge en BGR)
+                        inpainted_image = cv2.cvtColor(inpainted_image, cv2.COLOR_BGR2RGB)
+                        logger.info(f"Image de test chargée avec succès depuis {test_image_path}")
+                    except Exception as e:
+                        logger.error(f"Erreur lors du chargement de l'image de test: {str(e)}")
+                        inpainted_image = None
+
+                # Commenté temporairement l'appel à remove_wm
+                """
                 bg_removed_path, mask_path, inpainted_path, _ = watermak_removal_client.remove_wm(
                     image_url=lien_image_source,
                     threshold=0.85,
                     max_bbox_percent=10.0,
-                    remove_background_option=False,  # On ne supprime pas le fond à cette étape
-                    add_watermark_option=False,      # On n'ajoute pas de watermark à cette étape
+                    remove_background_option=False,
+                    add_watermark_option=False,
                     watermark="",
                     bbox_enlargement_factor=1.5,
                     remove_watermark_iterations=1
                 )
                 logger.info(f"Sortie de remove_wm: {bg_removed_path}, {mask_path}, {inpainted_path}, None")
+                """
                 
-                # Charger l'image inpainted depuis le fichier temporaire
-                inpainted_image = None
-                if inpainted_path and os.path.exists(inpainted_path):
-                    try:
-                        inpainted_image = cv2.imread(inpainted_path)
-                        # Convertir de BGR à RGB (OpenCV charge en BGR)
-                        inpainted_image = cv2.cvtColor(inpainted_image, cv2.COLOR_BGR2RGB)
-                        logger.info(f"Image inpainted chargée avec succès depuis {inpainted_path}")
-                    except Exception as e:
-                        logger.error(f"Erreur lors du chargement de l'image inpainted: {str(e)}")
-                
-                # Charger le masque depuis le fichier temporaire
-                mask_image = None
-                if mask_path and os.path.exists(mask_path):
-                    try:
-                        mask_image = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)  # Charger en niveaux de gris
-                        logger.info(f"Masque chargé avec succès depuis {mask_path}")
-                    except Exception as e:
-                        logger.error(f"Erreur lors du chargement du masque: {str(e)}")
-                
-                # Si l'image inpainted n'est pas disponible, télécharger l'image source
-                if inpainted_image is None:
-                    logger.warning("Image inpainted non disponible, utilisation de l'image source")
-                    inpainted_image = download_image(lien_image_source)
-                
-                # Si le masque n'est pas disponible, créer un masque vide
-                if mask_image is None:
-                    logger.warning("Masque non disponible, création d'un masque vide")
-                    # Créer un masque vide de la même taille que l'image
+                # Créer un masque vide
+                if inpainted_image is not None:
                     h, w = inpainted_image.shape[:2]
                     mask_image = np.zeros((h, w), dtype=np.uint8)
+                    logger.info("Masque vide créé")
+                else:
+                    logger.error("Impossible de créer le masque car l'image est None")
+                    continue
                 
                 # Vérifier que l'image est valide
                 if inpainted_image is not None and hasattr(inpainted_image, 'shape') and len(inpainted_image.shape) >= 2:
                     # Ajouter cette image à la liste des résultats pour l'édition manuelle
                     results.append((index, lien_image_source, inpainted_image, mask_image, supprimer_background))
                 else:
-                    logger.warning(f"Image inpainted invalide pour {lien_image_source}")
-                    # Utiliser l'image source comme solution de repli
-                    image_source = download_image(lien_image_source)
-                    if image_source is not None:
-                        h, w = image_source.shape[:2]
-                        empty_mask = np.zeros((h, w), dtype=np.uint8)
-                        results.append((index, lien_image_source, image_source, empty_mask, supprimer_background))
+                    logger.warning(f"Image invalide pour {lien_image_source}")
+                    continue
             
             except Exception as e:
                 logger.error(f"Erreur lors du traitement automatique de l'image {lien_image_source}: {str(e)}")
-                # En cas d'erreur, utiliser l'image source
-                try:
-                    # Télécharger l'image source pour l'édition manuelle
-                    image_source = download_image(lien_image_source)
-                    
-                    # Vérifier que l'image source est valide
-                    if image_source is not None and hasattr(image_source, 'shape') and len(image_source.shape) >= 2:
-                        # Créer un masque vide de la même taille que l'image
-                        h, w = image_source.shape[:2]
-                        empty_mask = np.zeros((h, w), dtype=np.uint8)
-                        
-                        # Ajouter cette image à la liste des résultats pour l'édition manuelle
-                        results.append((index, lien_image_source, image_source, empty_mask, supprimer_background))
-                    else:
-                        logger.error(f"Image source invalide pour {lien_image_source}")
-                except Exception as e:
-                    logger.error(f"Erreur lors du téléchargement de l'image {lien_image_source}: {str(e)}")
+                continue
     
     return results
 
 def apply_manual_edits(index, image, edited_mask, supprimer_background, add_watermark=True, watermark="www.inflatable-store.com"):
-    """
-    Applique les modifications manuelles et finalise le traitement de l'image.
-    """
-    global sheet_name
-    
     try:
-        # Vérifier si edited_mask est un dictionnaire (cas où l'utilisateur a créé un nouveau layer)
+        # Extraction du masque à partir du dictionnaire si nécessaire
+        processed_mask = None
         if isinstance(edited_mask, dict):
             logger.info(f"Masque reçu sous forme de dictionnaire: {edited_mask.keys()}")
             
-            # Si le dictionnaire contient une clé 'composite', utiliser cette image
-            if 'composite' in edited_mask:
-                edited_mask = edited_mask['composite']
-                logger.info(f"Utilisation de l'image composite du masque")
-            # Sinon, essayer d'utiliser la dernière couche
-            elif 'layers' in edited_mask and edited_mask['layers']:
-                # Prendre la dernière couche (celle que l'utilisateur vient de dessiner)
-                edited_mask = edited_mask['layers'][-1]['content']
-                logger.info(f"Utilisation de la dernière couche du masque")
-            else:
-                # Si aucune option ne fonctionne, créer un masque vide
-                logger.warning("Impossible d'extraire le masque du dictionnaire, création d'un masque vide")
+            # Vérifier d'abord si l'image composite est utilisable directement
+            if 'composite' in edited_mask and edited_mask['composite'] is not None:
+                logger.info("Utilisation de l'image composite comme masque")
+                
+                # Si c'est une PIL Image, l'utiliser directement
+                if isinstance(edited_mask['composite'], Image.Image):
+                    processed_mask = edited_mask['composite']
+                    logger.info(f"Image composite utilisée directement comme masque PIL: {processed_mask.size}")
+                else:
+                    # Convertir en PIL Image si c'est un numpy array
+                    composite = edited_mask['composite']
+                    if isinstance(composite, np.ndarray):
+                        processed_mask = Image.fromarray(composite)
+                        logger.info(f"Image composite convertie en PIL Image: {processed_mask.size}")
+            
+            # Si pas de masque valide à partir de composite, essayer les layers
+            if processed_mask is None and 'layers' in edited_mask and edited_mask['layers']:
+                logger.info(f"Nombre de layers: {len(edited_mask['layers'])}")
+                
+                # Prendre la dernière couche non vide 
+                for i, layer in enumerate(reversed(edited_mask['layers'])):
+                    logger.info(f"Analyse du layer {len(edited_mask['layers'])-i} (en partant de la fin)")
+                    
+                    if 'content' not in layer or layer['content'] is None:
+                        logger.info("Layer sans contenu, ignoré")
+                        continue
+                    
+                    # Traiter le contenu du layer
+                    try:
+                        # Si c'est une PIL Image, l'utiliser directement
+                        if isinstance(layer['content'], Image.Image):
+                            processed_mask = layer['content']
+                            logger.info(f"Layer utilisé directement comme masque PIL: {processed_mask.size}")
+                            break
+                        else:
+                            # Convertir en PIL Image si possible
+                            user_layer = layer['content']
+                            if isinstance(user_layer, np.ndarray):
+                                processed_mask = Image.fromarray(user_layer)
+                                logger.info(f"Layer converti en PIL Image: {processed_mask.size}")
+                                break
+                            else:
+                                logger.warning(f"Contenu du layer non utilisable: {type(user_layer)}")
+                    except Exception as layer_error:
+                        logger.error(f"Erreur lors du traitement du layer: {str(layer_error)}")
+                        continue
+            
+            if processed_mask is None:
+                logger.warning("Aucun layer valide trouvé, création d'un masque vide")
+                # Créer un masque PIL vide
                 if isinstance(image, np.ndarray):
                     h, w = image.shape[:2]
-                    edited_mask = np.zeros((h, w), dtype=np.uint8)
-                elif isinstance(image, dict) and 'composite' in image:
-                    h, w = image['composite'].shape[:2]
-                    edited_mask = np.zeros((h, w), dtype=np.uint8)
+                    processed_mask = Image.new('L', (w, h), 0)  # 'L' = 8-bit pixels, noir et blanc
+                elif isinstance(image, Image.Image):
+                    w, h = image.size
+                    processed_mask = Image.new('L', (w, h), 0)
                 else:
-                    raise ValueError("Format d'image invalide")
+                    logger.error(f"Type d'image non pris en charge: {type(image)}")
+                    raise ValueError(f"Type d'image non pris en charge: {type(image)}")
         
-        # Vérifier si image est un dictionnaire (cas où l'image a aussi été modifiée)
-        if isinstance(image, dict):
-            logger.info(f"Image reçue sous forme de dictionnaire: {image.keys()}")
+        # Vérifier que le masque est valide
+        if processed_mask is None:
+            raise ValueError("Impossible de créer un masque valide")
             
-            # Si le dictionnaire contient une clé 'composite', utiliser cette image
-            if 'composite' in image:
-                image = image['composite']
-                logger.info(f"Utilisation de l'image composite")
-            # Sinon, essayer d'utiliser la première couche (l'image de base)
-            elif 'layers' in image and image['layers']:
-                image = image['layers'][0]['content']
-                logger.info(f"Utilisation de la première couche de l'image")
-            else:
-                raise ValueError("Format d'image invalide")
+        # Préparation de l'image d'entrée (convertir en PIL.Image si nécessaire)
+        if isinstance(image, np.ndarray):
+            input_image = Image.fromarray(image)
+            logger.info(f"Image numpy convertie en PIL Image: {input_image.size}")
+        elif isinstance(image, Image.Image):
+            input_image = image
+            logger.info(f"Image déjà au format PIL: {input_image.size}")
+        else:
+            logger.error(f"Type d'image non pris en charge: {type(image)}")
+            raise ValueError(f"Type d'image non pris en charge: {type(image)}")
+            
+        logger.info(f"Type de l'image avant inpainting: {type(input_image)}")
+        logger.info(f"Taille de l'image avant inpainting: {input_image.size}")
+        logger.info(f"Type du masque avant inpainting: {type(processed_mask)}")
+        logger.info(f"Taille du masque avant inpainting: {processed_mask.size}")
         
-        # Appliquer l'inpainting via l'API Gradio
-        # Si l'appel échoue, une exception sera levée et le traitement s'arrêtera
-        logger.info("Appel à la méthode inpaint de WatermakRemovalClient")
-        _, inpainted_image = watermak_removal_client.inpaint(
-            input_image=image,
-            mask=edited_mask  # Utiliser le masque édité manuellement
+        # Sauvegarder l'image et le masque pour visualisation
+        debug_dir = os.path.join(os.getcwd(), "debug_images")
+        os.makedirs(debug_dir, exist_ok=True)
+        
+        # Générer un timestamp unique pour les fichiers
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Sauvegarder l'image d'entrée
+        input_image_path = os.path.join(debug_dir, f"input_image_{timestamp}.png")
+        input_image.save(input_image_path)
+        logger.info(f"Image d'entrée sauvegardée pour debug: {input_image_path}")
+        
+        # Sauvegarder le masque
+        mask_path = os.path.join(debug_dir, f"mask_{timestamp}.png")
+        processed_mask.save(mask_path)
+        logger.info(f"Masque sauvegardé pour debug: {mask_path}")
+        
+        # COMMENTÉ: Appel à inpainting pour les tests
+        """
+        success, inpainted_image = watermak_removal_client.inpaint(
+            input_image=input_image,
+            mask=processed_mask
         )
         
-        # Vérifier que l'image inpainted est valide
-        if inpainted_image is None:
-            logger.error("L'inpainting a retourné None, arrêt du traitement")
+        if not success or inpainted_image is None:
             raise ValueError("L'inpainting a échoué")
+        """
         
-        logger.info(f"Inpainting réussi, forme de l'image: {inpainted_image.shape}")
+        # Pour les tests, retourner les chemins des images sauvegardées
+        return input_image_path, mask_path
         
-        # Étape 2: Suppression du fond si demandé
-        if supprimer_background:
-            # Utiliser le client de suppression de fond
-            logger.info("Appel à la méthode remove_bg de WatermakRemovalClient")
-            final_image = watermak_removal_client.remove_bg(inpainted_image)
-            
-            # Vérifier que l'image sans fond est valide
-            if final_image is None:
-                logger.error("La suppression de fond a retourné None, arrêt du traitement")
-                raise ValueError("La suppression de fond a échoué")
-            
-            logger.info(f"Suppression de fond réussie, forme de l'image: {final_image.shape}")
-        else:
-            final_image = inpainted_image
-            
-        # Étape 3: Ajout d'un watermark si demandé
-        if add_watermark and watermark:
-            # Ajouter un watermark à l'image
-            # Pour l'instant, on utilise l'image sans watermark
-            # Cette fonctionnalité pourrait être implémentée ultérieurement
-            pass
-        
-        # Étape 4: Sauvegarder l'image dans un fichier temporaire avant de l'uploader
-        import tempfile
-        import os
-        from PIL import Image
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
-            temp_path = temp_file.name
-        
-        # Sauvegarder l'image dans le fichier temporaire
-        Image.fromarray(final_image).save(temp_path)
-        logger.info(f"Image finale sauvegardée à {temp_path}")
-        
-        # Upload sur Shopify
-        lien_image_traitee = shopify_client.upload_file_to_shopify(temp_path)
-        
-        # Nettoyer le fichier temporaire
-        try:
-            os.unlink(temp_path)
-        except Exception as e:
-            logger.warning(f"Erreur lors de la suppression du fichier temporaire: {str(e)}")
-        
-        # Étape 5: Mise à jour du GSheet
-        gsheet_client.write_cells(sheet_name, f"B{index}", [[lien_image_traitee]])
-        
-        return lien_image_traitee
     except Exception as e:
-        logger.error(f"Erreur lors du traitement manuel: {str(e)}")
-        # Relancer l'exception pour interrompre le traitement
-        raise e
+        logger.error(f"Erreur pendant l'application des modifications manuelles: {str(e)}")
+        logger.exception(e)  # Afficher la stacktrace complète
+        return None, None
 
 def inpaint_image(input_image, threshold, max_bbox_percent, remove_watermark_iterations):
     """
@@ -479,17 +456,23 @@ def test_inpaint_api():
     Fonction de test pour vérifier l'API d'inpainting.
     """
     try:
-        # Créer une image de test et un masque
+        # Créer une image de test et un masque en PIL
+        from PIL import Image
         import numpy as np
-        import cv2
         
         # Créer une image de test (un carré noir avec un carré blanc au milieu)
-        image = np.zeros((100, 100, 3), dtype=np.uint8)
-        image[25:75, 25:75] = 255
+        image = Image.new('RGB', (100, 100), (0, 0, 0))
+        # Dessiner un carré blanc au milieu
+        for y in range(25, 75):
+            for x in range(25, 75):
+                image.putpixel((x, y), (255, 255, 255))
         
         # Créer un masque de test (un petit carré blanc au milieu)
-        mask = np.zeros((100, 100), dtype=np.uint8)
-        mask[40:60, 40:60] = 255
+        mask = Image.new('L', (100, 100), 0)
+        # Dessiner un petit carré blanc au milieu
+        for y in range(40, 60):
+            for x in range(40, 60):
+                mask.putpixel((x, y), 255)
         
         # Appeler l'API d'inpainting
         logger.info("Test de l'API d'inpainting")
@@ -620,7 +603,7 @@ with gr.Blocks() as interfaces:
         with gr.Tab("Clean Image Pipeline (Manuel)"):
             with gr.Row():
                 with gr.Column():
-                    image_count_manual = gr.Slider(minimum=1, maximum=1000, value=1, label="Nombre d'images")           
+                    image_count_manual = gr.Slider(minimum=1, maximum=1000, value=2, label="Nombre d'images")           
                     sheet_name_manual = gr.Textbox(label="Onglet Source", value=os.getenv("GSHEET_SHEET_PHOTOS_MAC_TAB"))
                     launch_pipeline_manual = gr.Button("Lancer le traitement manuel")
                 
@@ -631,29 +614,41 @@ with gr.Blocks() as interfaces:
             with gr.Row(visible=False) as manual_edit_interface:
                 with gr.Column():
                     gr.Markdown("## Édition manuelle des watermarks")
-                    gr.Markdown("Utilisez l'outil de dessin pour marquer les zones de watermark non détectées (dessinez en blanc)")
+                    gr.Markdown("""
+                    ### Instructions:
+                    1. Un nouveau layer a été créé automatiquement pour vous
+                    2. Dessinez en blanc sur les zones de watermark à supprimer
+                    3. Seul ce nouveau layer sera utilisé comme masque pour l'inpainting
+                    """)
                     image_index = gr.Number(label="Index de l'image", visible=False)
                     image_source_url = gr.Textbox(label="URL de l'image source", visible=False)
                     remove_bg_option = gr.Checkbox(label="Supprimer l'arrière-plan", visible=False)
-                
-                with gr.Column(scale=2):  # Augmenter l'échelle pour agrandir l'éditeur
-                    image_editor = gr.ImageEditor(
-                        label="Éditez les zones de watermark (dessinez en blanc les watermarks non détectés)", 
-                        type="numpy",
-                        height=600,  # Augmenter la hauteur
-                        width=800    # Augmenter la largeur
-                    )
-                    mask_editor = gr.ImageEditor(
-                        label="Masque de détection (zones blanches = à traiter)", 
-                        type="numpy",
-                        height=600,  # Augmenter la hauteur
-                        width=800    # Augmenter la largeur
-                    )
-                
-                with gr.Column():
+                    
                     validate_edit = gr.Button("Valider et traiter l'image")
                     skip_image = gr.Button("Ignorer cette image")
                     result_status = gr.Textbox(label="Résultat", value="")
+                    
+                    # Composants pour afficher le masque et l'image finale
+                    processed_mask = gr.Image(
+                        label="Masque utilisé pour l'inpainting",
+                        type="numpy",
+                        visible=True
+                    )
+                    
+                    final_image = gr.Image(
+                        label="Image finale",
+                        type="numpy",
+                        visible=True
+                    )
+                
+                with gr.Column():  # Augmenter l'échelle pour agrandir l'éditeur
+                    image_editor = gr.ImageEditor(
+                        label="Éditez les zones de watermark (dessinez en blanc les watermarks non détectés)", 
+                        type="pil",  # Changé de "numpy" à "pil" pour assurer la compatibilité
+                        show_download_button=True,
+                        show_share_button=True,
+                        brush=gr.Brush(colors=["#FFFFFF"], default_size=40)  # Taille de brosse 40px par défaut
+                    )
             
             # Variables d'état pour gérer le flux de traitement
             current_image_index = gr.State(0)
@@ -672,8 +667,10 @@ with gr.Blocks() as interfaces:
                         0,   # index dans le GSheet
                         "",  # URL de l'image source
                         None,  # Image à éditer
-                        None,  # Masque à éditer
-                        False  # Option de suppression de fond
+                        False,  # Option de suppression de fond
+                        "",    # Statut du résultat
+                        gr.update(visible=False),  # Masque
+                        gr.update(visible=False)   # Image finale
                     )
                 
                 # Préparer la première image
@@ -687,8 +684,10 @@ with gr.Blocks() as interfaces:
                     index,  # index dans le GSheet
                     url,
                     image,
-                    mask,
-                    remove_bg
+                    remove_bg,
+                    "",  # Statut du résultat
+                    gr.update(visible=False),  # Masque
+                    gr.update(visible=False)   # Image finale
                 )
             
             # Fonction pour passer à l'image suivante
@@ -702,8 +701,10 @@ with gr.Blocks() as interfaces:
                         0,   # index dans le GSheet
                         "",  # URL de l'image source
                         None,  # Image à éditer
-                        None,  # Masque à éditer
-                        False  # Option de suppression de fond
+                        False,  # Option de suppression de fond
+                        "",     # Statut du résultat
+                        gr.update(visible=False),  # Masque
+                        gr.update(visible=False)   # Image finale
                     )
                 
                 next_idx = current_idx + 1
@@ -717,60 +718,47 @@ with gr.Blocks() as interfaces:
                     index,
                     url,
                     image,
-                    mask,
-                    remove_bg
+                    remove_bg,
+                    "",  # Statut du résultat
+                    gr.update(visible=False),  # Masque
+                    gr.update(visible=False)   # Image finale
                 )
             
             # Fonction pour traiter l'image après édition manuelle
-            def process_edited_image(current_idx, images, gsheet_index, edited_image, edited_mask, remove_bg):
-                if not images or current_idx >= len(images):
-                    return (
-                        "Erreur: aucune image à traiter", 
-                        gr.update(visible=False), 
-                        current_idx, 
-                        images, 
-                        0,   # index dans le GSheet
-                        "",  # URL de l'image source
-                        None,  # Image à éditer
-                        None,  # Masque à éditer
-                        False,  # Option de suppression de fond
-                        "Erreur: aucune image à traiter"  # Statut du résultat
+            def process_edited_image(current_idx, images, index, edited_image, remove_bg_option):
+                """
+                Traite l'image éditée manuellement et affiche les résultats.
+                """
+                try:
+                    # Récupérer l'image originale et le masque édité
+                    _, url, original_image, _, _ = images[current_idx]
+                    
+                    # Appliquer les modifications manuelles
+                    input_image_path, mask_path = apply_manual_edits(
+                        index=index,
+                        image=original_image,  # Utiliser l'image originale
+                        edited_mask=edited_image,  # Utiliser l'image éditée comme masque
+                        supprimer_background=remove_bg_option
                     )
+                    
+                    # Charger les images de debug pour affichage
+                    debug_images = []
+                    debug_labels = []
+                    
+                    if input_image_path and os.path.exists(input_image_path):
+                        debug_images.append(input_image_path)
+                        debug_labels.append("Image d'entrée")
+                        
+                    if mask_path and os.path.exists(mask_path):
+                        debug_images.append(mask_path)
+                        debug_labels.append("Masque")
+                    
+                    # Retourner les images de debug et leurs labels
+                    return debug_images, debug_labels
                 
-                # Appliquer les modifications et finaliser le traitement
-                result_url = apply_manual_edits(gsheet_index, edited_image, edited_mask, remove_bg)
-                
-                # Vérifier s'il reste des images à traiter
-                if current_idx >= len(images) - 1:
-                    return (
-                        "Toutes les images ont été traitées", 
-                        gr.update(visible=False), 
-                        current_idx, 
-                        images, 
-                        0,   # index dans le GSheet
-                        "",  # URL de l'image source
-                        None,  # Image à éditer
-                        None,  # Masque à éditer
-                        False,  # Option de suppression de fond
-                        f"Image traitée et uploadée: {result_url}"  # Statut du résultat
-                    )
-                
-                # Passer à l'image suivante
-                next_idx = current_idx + 1
-                next_index, next_url, next_image, next_mask, next_remove_bg = images[next_idx]
-                
-                return (
-                    f"Traitement de l'image {next_idx + 1}/{len(images)}",
-                    gr.update(visible=True),
-                    next_idx,
-                    images,
-                    next_index,
-                    next_url,
-                    next_image,
-                    next_mask,
-                    next_remove_bg,
-                    f"Image traitée et uploadée: {result_url}"
-                )
+                except Exception as e:
+                    logger.error(f"Erreur lors du traitement de l'image éditée: {str(e)}")
+                    return [], []
             
             # Connecter les événements
             launch_pipeline_manual.click(
@@ -784,8 +772,10 @@ with gr.Blocks() as interfaces:
                     image_index,
                     image_source_url,
                     image_editor,
-                    mask_editor,
-                    remove_bg_option
+                    remove_bg_option,
+                    result_status,
+                    processed_mask,
+                    final_image
                 ]
             )
             
@@ -796,7 +786,6 @@ with gr.Blocks() as interfaces:
                     remaining_images,
                     image_index,
                     image_editor,
-                    mask_editor,
                     remove_bg_option
                 ],
                 outputs=[
@@ -807,9 +796,12 @@ with gr.Blocks() as interfaces:
                     image_index,
                     image_source_url,
                     image_editor,
-                    mask_editor,
                     remove_bg_option,
-                    result_status
+                    result_status,
+                    processed_mask,
+                    final_image,
+                    processed_mask,
+                    final_image
                 ]
             )
             
@@ -824,8 +816,10 @@ with gr.Blocks() as interfaces:
                     image_index,
                     image_source_url,
                     image_editor,
-                    mask_editor,
-                    remove_bg_option
+                    remove_bg_option,
+                    result_status,
+                    processed_mask,
+                    final_image
                 ]
             )
         with gr.Tab("Inpainting avec masque"):
@@ -910,6 +904,17 @@ with gr.Blocks() as interfaces:
                         max_bbox_percent, bbox_enlargement_factor],
                 outputs=[output_original_image, output_detection, output_mask]
             )
+
+    # Ajouter une galerie pour afficher les images de debug
+    with gr.Row():
+        debug_gallery = gr.Gallery(
+            label="Images de debug",
+            show_label=True,
+            elem_id="debug_gallery",
+            columns=2,
+            rows=1,
+            height="auto"
+        )
 
 if __name__ == "__main__":
     initialize_clients()

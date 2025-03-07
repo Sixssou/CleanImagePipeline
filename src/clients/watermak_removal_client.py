@@ -1,4 +1,4 @@
-from gradio_client import Client
+from gradio_client import Client, handle_file
 import httpx
 from typing import Dict, Any, Tuple, Union
 import numpy as np
@@ -9,7 +9,6 @@ import base64
 from io import BytesIO
 from PIL import Image
 import cv2
-from gradio_client import handle_file
 import tempfile
 import requests
 
@@ -268,133 +267,198 @@ class WatermakRemovalClient:
             logger.error(f"Erreur lors de la conversion base64 en numpy: {str(e)}")
             return None
     
-    def inpaint(self, 
-                input_image: np.ndarray, 
-                mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def inpaint(self, input_image: Image.Image, mask: Image.Image) -> Tuple[bool, np.ndarray]:
         """
-        Applique l'inpainting sur une image en utilisant un masque fourni.
+        Applique l'inpainting sur une image en utilisant un masque.
         
         Args:
-            input_image (np.ndarray): Image d'entrée au format numpy array
-            mask (np.ndarray): Masque indiquant les zones à traiter (zones blanches)
+            input_image (Image.Image): Image d'entrée au format PIL
+            mask (Image.Image): Masque binaire où les pixels blancs (255) indiquent les zones à inpainter
             
         Returns:
-            Tuple[np.ndarray, np.ndarray]: Tuple contenant (masque utilisé, image traitée)
+            Tuple[bool, np.ndarray]: (succès, image inpainted)
         """
         try:
-            # Vérifier si l'image a un canal alpha (4 canaux)
-            if len(input_image.shape) == 3 and input_image.shape[2] == 4:
-                # Supprimer le canal alpha
-                input_image = input_image[:, :, :3]
-                logger.info(f"Canal alpha supprimé de l'image, nouvelle forme: {input_image.shape}")
+            logger.info("Début de l'inpainting")
             
-            # Vérifier si le masque a un canal alpha (4 canaux)
-            if len(mask.shape) == 3 and mask.shape[2] == 4:
-                # Utiliser le canal alpha comme masque ou convertir en niveaux de gris
-                mask = mask[:, :, 3]  # Utiliser le canal alpha
-                logger.info(f"Canal alpha utilisé comme masque, nouvelle forme: {mask.shape}")
+            # Vérifier que les entrées sont bien des images PIL
+            if not isinstance(input_image, Image.Image):
+                logger.error(f"L'image d'entrée n'est pas une image PIL: {type(input_image)}")
+                return False, None
             
-            # S'assurer que le masque est en niveaux de gris
-            if len(mask.shape) == 3 and mask.shape[2] == 3:
-                mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
-                logger.info(f"Masque converti en niveaux de gris, nouvelle forme: {mask.shape}")
+            if not isinstance(mask, Image.Image):
+                logger.error(f"Le masque n'est pas une image PIL: {type(mask)}")
+                return False, None
             
-            # S'assurer que le masque est au bon format
-            if mask.dtype != np.uint8:
-                mask = mask.astype(np.uint8)
+            logger.info(f"Taille de l'image d'entrée: {input_image.size}")
+            logger.info(f"Taille du masque: {mask.size}")
             
-            # Normaliser le masque (0-255)
-            max_val = np.max(mask)
-            if max_val > 0:
-                mask = (mask / max_val * 255).astype(np.uint8)
+            # Convertir en numpy pour le traitement
+            input_image_np = np.array(input_image)
+            mask_np = np.array(mask)
             
-            logger.info(f"Forme finale de l'image: {input_image.shape}, dtype: {input_image.dtype}")
-            logger.info(f"Forme finale du masque: {mask.shape}, dtype: {mask.dtype}, min: {np.min(mask)}, max: {np.max(mask)}")
+            # Vérifier le nombre de pixels blancs dans le masque
+            white_pixels = np.sum(mask_np > 127)
+            logger.info(f"Nombre de pixels blancs dans le masque: {white_pixels}")
             
-            # Utiliser la variable d'environnement pour le nom de l'API
-            api_name = os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_INPAINT_WITH_MASK")
-            logger.info(f"Appel à l'API avec api_name={api_name}")
+            # Si le masque est complètement noir ou presque, retourner l'image d'origine
+            if white_pixels < 10:
+                logger.warning("Masque presque vide, retour de l'image d'origine sans inpainting")
+                return True, input_image_np
             
-            # Vérifier si api_name est None ou vide
-            if api_name is None or api_name == "":
-                logger.warning("HF_SPACE_WATERMAK_REMOVAL_ROUTE_INPAINT_WITH_MASK n'est pas défini, utilisation de la valeur par défaut 'inpaint_with_mask'")
-                api_name = "inpaint_with_mask"
+            # Vérifier que le masque est bien un tableau numpy 2D
+            if len(mask_np.shape) > 2:
+                mask_np = mask_np[:, :, 0]  # Prendre le premier canal si c'est une image RGB/RGBA
             
-            # Convertir les images en base64
-            # Convertir l'image en base64
-            pil_img = Image.fromarray(input_image)
-            buffered_img = BytesIO()
-            pil_img.save(buffered_img, format="PNG")
-            img_str = base64.b64encode(buffered_img.getvalue()).decode()
+            # S'assurer que le masque est binaire (0 ou 255)
+            mask_np = np.where(mask_np > 127, 255, 0).astype(np.uint8)
             
-            # Convertir le masque en base64
-            pil_mask = Image.fromarray(mask)
-            buffered_mask = BytesIO()
-            pil_mask.save(buffered_mask, format="PNG")
-            mask_str = base64.b64encode(buffered_mask.getvalue()).decode()
-            
-            logger.info("Images converties en base64 pour l'API")
-            
-            # Tenter d'appeler l'API avec les chaînes base64
             try:
-                logger.info("Tentative d'appel à l'API avec les chaînes base64")
+                # Préparation des images pour l'API Gradio
+                logger.info("Préparation des images pour l'API Gradio")
                 
-                # Appel à l'API avec les arguments positionnels (sans noms de paramètres)
+                # Utiliser directement les images PIL pour l'API
+                input_image_path = self._prepare_image_for_api(input_image, prefix="input_")
+                mask_path = self._prepare_image_for_api(mask, prefix="mask_", is_mask=True)
+                
+                logger.info(f"Fichiers préparés: {input_image_path}, {mask_path}")
+                
+                # Appel à l'API Gradio avec les chemins de fichiers
                 result = self.client.predict(
-                    img_str,  # Premier argument: image en base64
-                    mask_str,  # Deuxième argument: masque en base64
-                    api_name=api_name
+                    input_image_path,
+                    mask_path,
+                    api_name=os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_INPAINT_WITH_MASK")
                 )
                 
-                logger.info(f"Appel à l'API réussi, type de résultat: {type(result)}")
+                # Nettoyer les fichiers temporaires
+                try:
+                    if os.path.exists(input_image_path):
+                        os.remove(input_image_path)
+                    if os.path.exists(mask_path):
+                        os.remove(mask_path)
+                except Exception as cleanup_error:
+                    logger.warning(f"Erreur lors du nettoyage des fichiers temporaires: {cleanup_error}")
                 
-                # Traiter le résultat
+                # Vérifier le résultat
                 if result is None:
-                    logger.warning("L'API a retourné None, utilisation de l'image d'origine")
-                    return mask, input_image
-                elif isinstance(result, np.ndarray):
-                    return mask, result
-                elif isinstance(result, str):
-                    # Si le résultat est une chaîne base64, la décoder
-                    if result.startswith("data:image"):
-                        # Extraire la partie base64 de la chaîne data URL
-                        base64_data = result.split(",")[1]
-                        img_data = base64.b64decode(base64_data)
-                    else:
-                        # Sinon, supposer que c'est directement une chaîne base64
-                        try:
-                            img_data = base64.b64decode(result)
-                        except:
-                            # Si ce n'est pas une chaîne base64 valide et que c'est un chemin de fichier
-                            if os.path.exists(result):
-                                result_image = cv2.imread(result)
-                                result_image = cv2.cvtColor(result_image, cv2.COLOR_BGR2RGB)
-                                return mask, result_image
+                    logger.error("L'API a retourné None")
+                    return False, input_image_np
+                
+                # Si le résultat est une chaîne (chemin de fichier ou URL), charger l'image
+                if isinstance(result, str):
+                    logger.info(f"Résultat reçu sous forme de chaîne: {result}")
+                    try:
+                        if result.startswith(('http://', 'https://')):
+                            # Charger depuis URL
+                            response = requests.get(result)
+                            if response.status_code == 200:
+                                result_image = np.array(Image.open(BytesIO(response.content)))
                             else:
-                                logger.warning(f"Résultat non reconnu: {result[:100]}...")
-                                return mask, input_image
+                                raise ValueError(f"Échec du téléchargement de l'image: {response.status_code}")
+                        elif os.path.exists(result):
+                            # Charger depuis fichier local
+                            result_image = cv2.imread(result)
+                            result_image = cv2.cvtColor(result_image, cv2.COLOR_BGR2RGB)
+                        else:
+                            # Essayer de décoder comme base64
+                            result_image = self._base64_to_numpy(result)
+                            
+                        if result_image is None:
+                            raise ValueError("Impossible de décoder l'image résultante")
+                            
+                        return True, result_image
+                    except Exception as load_error:
+                        logger.error(f"Erreur lors du chargement du résultat: {load_error}")
+                        return False, input_image_np
+                
+                # Si le résultat est déjà un array numpy
+                if isinstance(result, np.ndarray):
+                    logger.info(f"Résultat reçu sous forme de numpy array: {result.shape}")
+                    return True, result
                     
-                    # Convertir les données décodées en image
-                    img = Image.open(BytesIO(img_data))
-                    result_image = np.array(img)
-                    return mask, result_image
-                elif isinstance(result, tuple) and len(result) == 2:
-                    return result
-                else:
-                    logger.warning(f"Type de résultat inattendu: {type(result)}")
-                    return mask, input_image
+                # Format non géré
+                logger.error(f"Format de résultat non géré: {type(result)}")
+                return False, input_image_np
                 
-            except Exception as e:
-                logger.error(f"Erreur lors de l'appel à l'API: {str(e)}")
-                
-                # En cas d'échec, retourner l'image d'origine
-                return mask, input_image
-                
+            except Exception as api_error:
+                logger.error(f"Erreur lors de l'appel à l'API: {str(api_error)}")
+                logger.exception(api_error)  # Log la stack trace complète
+                return False, input_image_np
+            
         except Exception as e:
-            # Capturer l'exception et la relancer pour interrompre le traitement
             logger.error(f"Erreur lors de l'inpainting: {str(e)}")
-            # Retourner l'image d'origine en cas d'erreur
-            return mask, input_image
+            logger.exception(e)  # Log la stack trace complète
+            return False, np.array(input_image)
+
+    def _prepare_image_for_api(self, image, prefix="img_", is_mask=False):
+        """
+        Prépare une image pour l'envoi à l'API en la convertissant 
+        en fichier temporaire.
+        
+        Args:
+            image: Image source (np.ndarray, PIL.Image, dict ou str)
+            prefix: Préfixe pour le nom du fichier temporaire
+            is_mask: True si l'image est un masque binaire
+            
+        Returns:
+            str: Chemin vers le fichier temporaire créé
+        """
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix=prefix).name
+        
+        # Cas 1: Image est déjà un chemin de fichier
+        if isinstance(image, str) and (os.path.exists(image) or image.startswith('http')):
+            if os.path.exists(image):
+                # Copier le fichier local
+                img = cv2.imread(image)
+                cv2.imwrite(temp_file, img)
+            else:
+                # Télécharger l'URL
+                response = requests.get(image)
+                img = Image.open(BytesIO(response.content))
+                img.save(temp_file)
+            return temp_file
+        
+        # Cas 2: Image est un tableau numpy
+        elif isinstance(image, np.ndarray):
+            if is_mask:
+                # Assurer que le masque est en niveaux de gris
+                if len(image.shape) > 2 and image.shape[2] > 1:
+                    image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+                # Normaliser entre 0 et 255
+                if image.max() <= 1.0:
+                    image = (image * 255).astype(np.uint8)
+            
+            # Sauvegarder l'image
+            if is_mask and len(image.shape) == 2:
+                cv2.imwrite(temp_file, image)
+            else:
+                if len(image.shape) == 3 and image.shape[2] == 3:
+                    # Image RGB
+                    cv2.imwrite(temp_file, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+                else:
+                    # Autres formats
+                    Image.fromarray(image).save(temp_file)
+            return temp_file
+        
+        # Cas 3: Image est un objet PIL
+        elif isinstance(image, Image.Image):
+            image.save(temp_file)
+            return temp_file
+        
+        # Cas 4: Image est un dictionnaire (cas de l'éditeur Gradio)
+        elif isinstance(image, dict):
+            if 'composite' in image:
+                img_array = image['composite']
+                Image.fromarray(img_array).save(temp_file)
+                return temp_file
+            elif 'layers' in image and image['layers']:
+                # Prendre la première couche ou la dernière selon le contexte
+                layer = image['layers'][-1 if is_mask else 0]['content']
+                Image.fromarray(layer).save(temp_file)
+                return temp_file
+            
+        # Cas d'erreur
+        raise ValueError(f"Format d'image non pris en charge: {type(image)}")
     
     def detect_and_inpaint(self, 
                           input_image: np.ndarray, 

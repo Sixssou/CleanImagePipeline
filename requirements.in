@@ -9,3 +9,4 @@ openai
 gspread
 google-auth
 requests
+opencv-python
