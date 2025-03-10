@@ -8,6 +8,8 @@ import requests
 from io import BytesIO
 import tempfile
 import cv2
+from datetime import datetime
+import base64
 
 from src.clients.gsheet_client import GSheetClient
 from src.clients.shopify_client import ShopifyClient
@@ -362,24 +364,33 @@ def apply_manual_edits(index, image, edited_mask, supprimer_background, add_wate
         processed_mask.save(mask_path)
         logger.info(f"Masque sauvegardé pour debug: {mask_path}")
         
-        # COMMENTÉ: Appel à inpainting pour les tests
-        """
+        # Appel à inpainting
+        logger.info("Appel à la méthode inpaint")
         success, inpainted_image = watermak_removal_client.inpaint(
             input_image=input_image,
             mask=processed_mask
         )
         
         if not success or inpainted_image is None:
-            raise ValueError("L'inpainting a échoué")
-        """
+            logger.warning("L'inpainting a échoué, utilisation de l'image d'origine")
+            # Retourner l'image d'origine en cas d'échec
+            return input_image_path, mask_path, np.array(input_image)
         
-        # Pour les tests, retourner les chemins des images sauvegardées
-        return input_image_path, mask_path
+        # Sauvegarder l'image inpainted pour debug
+        inpainted_image_path = os.path.join(debug_dir, f"inpainted_{timestamp}.png")
+        if isinstance(inpainted_image, np.ndarray):
+            Image.fromarray(inpainted_image).save(inpainted_image_path)
+        else:
+            inpainted_image.save(inpainted_image_path)
+        logger.info(f"Image inpainted sauvegardée pour debug: {inpainted_image_path}")
+        
+        # Retourner les chemins des images sauvegardées et l'image inpainted
+        return input_image_path, mask_path, inpainted_image
         
     except Exception as e:
         logger.error(f"Erreur pendant l'application des modifications manuelles: {str(e)}")
         logger.exception(e)  # Afficher la stacktrace complète
-        return None, None
+        return None, None, None
 
 def inpaint_image(input_image, threshold, max_bbox_percent, remove_watermark_iterations):
     """
@@ -474,14 +485,54 @@ def test_inpaint_api():
             for x in range(40, 60):
                 mask.putpixel((x, y), 255)
         
-        # Appeler l'API d'inpainting
-        logger.info("Test de l'API d'inpainting")
-        _, result = watermak_removal_client.inpaint(image, mask)
+        # Convertir les images en base64
+        buffered_img = BytesIO()
+        image.save(buffered_img, format="PNG")
+        img_base64 = base64.b64encode(buffered_img.getvalue()).decode('utf-8')
         
-        logger.info(f"Test réussi, type de résultat: {type(result)}")
-        return "Test réussi"
+        buffered_mask = BytesIO()
+        mask.save(buffered_mask, format="PNG")
+        mask_base64 = base64.b64encode(buffered_mask.getvalue()).decode('utf-8')
+        
+        # Obtenir le nom de l'API
+        api_name = os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_INPAINT_WITH_MASK")
+        logger.info(f"Test de l'API d'inpainting avec api_name={api_name}")
+        
+        # Appel direct à l'API avec les chaînes base64
+        try:
+            # Essayer d'abord avec les arguments positionnels
+            logger.info("Tentative d'appel à l'API avec les arguments positionnels")
+            result = watermak_removal_client.client.predict(
+                img_base64,
+                mask_base64,
+                api_name=api_name
+            )
+            logger.info(f"Test réussi avec arguments positionnels, type de résultat: {type(result)}")
+        except Exception as e:
+            logger.error(f"Erreur lors de l'appel à l'API avec les arguments positionnels: {str(e)}")
+            # Si ça échoue, essayer avec les arguments nommés
+            logger.info("Tentative d'appel à l'API avec les arguments nommés")
+            result = watermak_removal_client.client.predict(
+                input_image=img_base64,
+                input_mask=mask_base64,
+                api_name=api_name
+            )
+            logger.info(f"Test réussi avec arguments nommés, type de résultat: {type(result)}")
+        
+        # Appel via la méthode inpaint
+        logger.info("Test de la méthode inpaint")
+        success, inpainted_image = watermak_removal_client.inpaint(image, mask)
+        
+        if success and inpainted_image is not None:
+            logger.info(f"Test de la méthode inpaint réussi, type de résultat: {type(inpainted_image)}")
+            if isinstance(inpainted_image, np.ndarray):
+                logger.info(f"Forme de l'image inpainted: {inpainted_image.shape}")
+            return "Test réussi"
+        else:
+            return "Test échoué: l'inpainting n'a pas réussi"
     except Exception as e:
         logger.error(f"Erreur lors du test de l'API d'inpainting: {str(e)}")
+        logger.exception(e)  # Afficher la stacktrace complète
         return f"Erreur: {str(e)}"
 
 # Interface Gradio
@@ -734,7 +785,7 @@ with gr.Blocks() as interfaces:
                     _, url, original_image, _, _ = images[current_idx]
                     
                     # Appliquer les modifications manuelles
-                    input_image_path, mask_path = apply_manual_edits(
+                    input_image_path, mask_path, inpainted_image = apply_manual_edits(
                         index=index,
                         image=original_image,  # Utiliser l'image originale
                         edited_mask=edited_image,  # Utiliser l'image éditée comme masque

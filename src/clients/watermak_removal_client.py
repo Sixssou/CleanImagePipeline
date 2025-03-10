@@ -317,36 +317,49 @@ class WatermakRemovalClient:
                 # Préparation des images pour l'API Gradio
                 logger.info("Préparation des images pour l'API Gradio")
                 
-                # Utiliser directement les images PIL pour l'API
-                input_image_path = self._prepare_image_for_api(input_image, prefix="input_")
-                mask_path = self._prepare_image_for_api(mask, prefix="mask_", is_mask=True)
+                # Convertir les images en base64
+                buffered_img = BytesIO()
+                input_image.save(buffered_img, format="PNG")
+                img_base64 = base64.b64encode(buffered_img.getvalue()).decode('utf-8')
                 
-                logger.info(f"Fichiers préparés: {input_image_path}, {mask_path}")
+                # Convertir le masque en base64
+                buffered_mask = BytesIO()
+                Image.fromarray(mask_np).save(buffered_mask, format="PNG")
+                mask_base64 = base64.b64encode(buffered_mask.getvalue()).decode('utf-8')
                 
-                # Appel à l'API Gradio avec les chemins de fichiers
-                result = self.client.predict(
-                    input_image_path,
-                    mask_path,
-                    api_name=os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_INPAINT_WITH_MASK")
-                )
+                logger.info("Images converties en base64")
                 
-                # Nettoyer les fichiers temporaires
+                # Obtenir le nom de l'API à partir des variables d'environnement
+                api_name = os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_INPAINT_WITH_MASK")
+                logger.info(f"Appel à l'API avec api_name={api_name}")
+                
+                # Appel à l'API Gradio avec les chaînes base64
                 try:
-                    if os.path.exists(input_image_path):
-                        os.remove(input_image_path)
-                    if os.path.exists(mask_path):
-                        os.remove(mask_path)
-                except Exception as cleanup_error:
-                    logger.warning(f"Erreur lors du nettoyage des fichiers temporaires: {cleanup_error}")
+                    # Essayer d'abord avec les arguments positionnels
+                    logger.info("Tentative d'appel à l'API avec les arguments positionnels")
+                    result = self.client.predict(
+                        img_base64,
+                        mask_base64,
+                        api_name=api_name
+                    )
+                except Exception as e:
+                    logger.error(f"Erreur lors de l'appel à l'API avec les arguments positionnels: {str(e)}")
+                    # Si ça échoue, essayer avec les arguments nommés
+                    logger.info("Tentative d'appel à l'API avec les arguments nommés")
+                    result = self.client.predict(
+                        input_image=img_base64,
+                        input_mask=mask_base64,
+                        api_name=api_name
+                    )
                 
                 # Vérifier le résultat
                 if result is None:
                     logger.error("L'API a retourné None")
                     return False, input_image_np
                 
-                # Si le résultat est une chaîne (chemin de fichier ou URL), charger l'image
+                # Si le résultat est une chaîne (base64 ou URL), charger l'image
                 if isinstance(result, str):
-                    logger.info(f"Résultat reçu sous forme de chaîne: {result}")
+                    logger.info(f"Résultat reçu sous forme de chaîne (longueur: {len(result)})")
                     try:
                         if result.startswith(('http://', 'https://')):
                             # Charger depuis URL
@@ -355,13 +368,23 @@ class WatermakRemovalClient:
                                 result_image = np.array(Image.open(BytesIO(response.content)))
                             else:
                                 raise ValueError(f"Échec du téléchargement de l'image: {response.status_code}")
-                        elif os.path.exists(result):
-                            # Charger depuis fichier local
-                            result_image = cv2.imread(result)
-                            result_image = cv2.cvtColor(result_image, cv2.COLOR_BGR2RGB)
+                        elif result.startswith('data:image'):
+                            # Extraire la partie base64 de la chaîne data URL
+                            base64_data = result.split(',')[1]
+                            img_data = base64.b64decode(base64_data)
+                            result_image = np.array(Image.open(BytesIO(img_data)))
                         else:
                             # Essayer de décoder comme base64
-                            result_image = self._base64_to_numpy(result)
+                            try:
+                                img_data = base64.b64decode(result)
+                                result_image = np.array(Image.open(BytesIO(img_data)))
+                            except:
+                                logger.warning("Impossible de décoder comme base64, essai de chargement comme fichier")
+                                if os.path.exists(result):
+                                    result_image = cv2.imread(result)
+                                    result_image = cv2.cvtColor(result_image, cv2.COLOR_BGR2RGB)
+                                else:
+                                    raise ValueError(f"Format de résultat non reconnu: {result[:100]}...")
                             
                         if result_image is None:
                             raise ValueError("Impossible de décoder l'image résultante")
