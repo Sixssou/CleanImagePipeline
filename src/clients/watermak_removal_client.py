@@ -1,4 +1,4 @@
-from gradio_client import Client, handle_file
+from gradio_client import Client, handle_file, file
 import httpx
 from typing import Dict, Any, Tuple, Union
 import numpy as np
@@ -11,6 +11,9 @@ from PIL import Image
 import cv2
 import tempfile
 import requests
+import uuid
+
+from src.utils.image_utils import TEMP_DIR
 
 load_dotenv()
 
@@ -269,149 +272,165 @@ class WatermakRemovalClient:
     
     def inpaint(self, input_image: Image.Image, mask: Image.Image) -> Tuple[bool, np.ndarray]:
         """
-        Applique l'inpainting sur une image en utilisant un masque.
+        Effectue l'inpainting d'une image en utilisant un masque.
         
         Args:
-            input_image (Image.Image): Image d'entrée au format PIL
-            mask (Image.Image): Masque binaire où les pixels blancs (255) indiquent les zones à inpainter
+            input_image (Image.Image): Image d'entrée à traiter
+            mask (Image.Image): Masque binaire où les zones blanches seront inpaintées
             
         Returns:
-            Tuple[bool, np.ndarray]: (succès, image inpainted)
+            Tuple[bool, np.ndarray]: Tuple contenant (succès, image résultante)
         """
+        logger.info("=== DÉBUT inpaint ===")
+        logger.info(f"Type de input_image: {type(input_image)}")
+        if isinstance(input_image, Image.Image):
+            logger.info(f"Mode de input_image: {input_image.mode}, taille: {input_image.size}")
+            # Sauvegarder l'image d'entrée pour débogage
+            try:
+                debug_path = os.path.join(TEMP_DIR, f"debug_input_{uuid.uuid4()}.png")
+                input_image.save(debug_path)
+                logger.info(f"Image d'entrée sauvegardée pour débogage: {debug_path}")
+            except Exception as e:
+                logger.warning(f"Impossible de sauvegarder l'image d'entrée pour débogage: {e}")
+        
+        logger.info(f"Type de mask: {type(mask)}")
+        if isinstance(mask, Image.Image):
+            logger.info(f"Mode de mask: {mask.mode}, taille: {mask.size}")
+            # Sauvegarder le masque pour débogage
+            try:
+                debug_path = os.path.join(TEMP_DIR, f"debug_mask_{uuid.uuid4()}.png")
+                mask.save(debug_path)
+                logger.info(f"Masque sauvegardé pour débogage: {debug_path}")
+            except Exception as e:
+                logger.warning(f"Impossible de sauvegarder le masque pour débogage: {e}")
+            
+            # Analyser le contenu du masque pour détecter s'il y a des pixels non noirs (valeurs > 0)
+            if mask.mode == "L":
+                mask_array = np.array(mask)
+                non_black_pixels = np.sum(mask_array > 0)
+                total_pixels = mask_array.size
+                logger.info(f"Masque: {non_black_pixels} pixels non noirs sur {total_pixels} ({non_black_pixels/total_pixels*100:.2f}%)")
+                
+                # Afficher les valeurs uniques et leur fréquence dans le masque
+                unique_values, counts = np.unique(mask_array, return_counts=True)
+                logger.info(f"Valeurs uniques dans le masque: {list(zip(unique_values, counts))}")
+                
+                # Vérifier s'il y a trop peu de pixels non noirs (< 0.01% de l'image)
+                if non_black_pixels < total_pixels * 0.0001:
+                    logger.warning(f"ATTENTION: Le masque contient très peu de pixels non noirs ({non_black_pixels} pixels, {non_black_pixels/total_pixels*100:.4f}% de l'image)")
+                
+                # Vérifier si le masque est entièrement noir ou blanc
+                if len(unique_values) <= 2 and 0 in unique_values:
+                    if len(unique_values) == 1:  # Uniquement des zéros
+                        logger.warning("ATTENTION: Le masque est entièrement noir (tous les pixels sont à 0)")
+                    else:  # Deux valeurs: 0 et une autre
+                        non_zero_value = unique_values[1] if unique_values[0] == 0 else unique_values[0]
+                        logger.info(f"Le masque est binaire avec des valeurs 0 et {non_zero_value}")
+                else:
+                    logger.info(f"Le masque contient {len(unique_values)} valeurs différentes")
+        
+        # Vérifier que les entrées sont des images PIL
+        if not isinstance(input_image, Image.Image):
+            logger.error(f"L'image d'entrée n'est pas une instance de PIL.Image: {type(input_image)}")
+            return False, None
+        
+        if not isinstance(mask, Image.Image):
+            logger.error(f"Le masque n'est pas une instance de PIL.Image: {type(mask)}")
+            return False, None
+        
+        # Vérifier que les deux images ont la même taille
+        if input_image.size != mask.size:
+            logger.error(f"L'image et le masque n'ont pas la même taille: {input_image.size} vs {mask.size}")
+            # Redimensionner le masque pour correspondre à l'image
+            logger.info(f"Redimensionnement du masque pour correspondre à l'image...")
+            mask = mask.resize(input_image.size, Image.LANCZOS)
+            logger.info(f"Masque redimensionné: {mask.size}")
+        
         try:
-            logger.info("Début de l'inpainting")
-            
-            # Vérifier que les entrées sont bien des images PIL
-            if not isinstance(input_image, Image.Image):
-                logger.error(f"L'image d'entrée n'est pas une image PIL: {type(input_image)}")
-                return False, None
-            
-            if not isinstance(mask, Image.Image):
-                logger.error(f"Le masque n'est pas une image PIL: {type(mask)}")
-                return False, None
-            
-            logger.info(f"Taille de l'image d'entrée: {input_image.size}")
-            logger.info(f"Taille du masque: {mask.size}")
-            
-            # Convertir en numpy pour le traitement
-            input_image_np = np.array(input_image)
-            mask_np = np.array(mask)
-            
-            # Vérifier le nombre de pixels blancs dans le masque
-            white_pixels = np.sum(mask_np > 127)
-            logger.info(f"Nombre de pixels blancs dans le masque: {white_pixels}")
-            
-            # Si le masque est complètement noir ou presque, retourner l'image d'origine
-            if white_pixels < 10:
-                logger.warning("Masque presque vide, retour de l'image d'origine sans inpainting")
-                return True, input_image_np
-            
-            # Vérifier que le masque est bien un tableau numpy 2D
-            if len(mask_np.shape) > 2:
-                mask_np = mask_np[:, :, 0]  # Prendre le premier canal si c'est une image RGB/RGBA
-            
-            # S'assurer que le masque est binaire (0 ou 255)
-            mask_np = np.where(mask_np > 127, 255, 0).astype(np.uint8)
+            # Préparer les images pour l'API
+            logger.info("Préparation des images pour l'API...")
+            try:
+                input_image_path = self._prepare_image_for_api(input_image, prefix="input_")
+                logger.info(f"Chemin de l'image d'entrée préparée: {input_image_path}")
+            except Exception as e:
+                logger.error(f"Erreur lors de la préparation de l'image d'entrée: {e}")
+                logger.exception(e)
+                raise
             
             try:
-                # Préparation des images pour l'API Gradio
-                logger.info("Préparation des images pour l'API Gradio")
+                # S'assurer que le masque est en mode L (niveaux de gris)
+                if mask.mode != "L":
+                    logger.info(f"Conversion du masque du mode {mask.mode} au mode L")
+                    mask = mask.convert("L")
                 
-                # Convertir les images en base64
-                buffered_img = BytesIO()
-                input_image.save(buffered_img, format="PNG")
-                img_base64 = base64.b64encode(buffered_img.getvalue()).decode('utf-8')
-                
-                # Convertir le masque en base64
-                buffered_mask = BytesIO()
-                Image.fromarray(mask_np).save(buffered_mask, format="PNG")
-                mask_base64 = base64.b64encode(buffered_mask.getvalue()).decode('utf-8')
-                
-                logger.info("Images converties en base64")
-                
+                mask_path = self._prepare_image_for_api(mask, prefix="mask_", is_mask=True)
+                logger.info(f"Chemin du masque préparé: {mask_path}")
+            except Exception as e:
+                logger.error(f"Erreur lors de la préparation du masque: {e}")
+                logger.exception(e)
+                raise
+            
+            logger.info(f"Chemins préparés: input_image_path={input_image_path}, mask_path={mask_path}")
+            
+            # Importer file de gradio_client pour l'envoi de fichiers
+            from gradio_client import file
+            
+            # Vérifier que les chemins existent
+            if not os.path.exists(input_image_path):
+                logger.error(f"Le chemin de l'image d'entrée n'existe pas: {input_image_path}")
+                return False, None
+            
+            if not os.path.exists(mask_path):
+                logger.error(f"Le chemin du masque n'existe pas: {mask_path}")
+                return False, None
+            
+            # Appeler l'API d'inpainting avec le masque en utilisant file()
+            logger.info("Appel de l'API d'inpainting...")
+            try:
                 # Obtenir le nom de l'API à partir des variables d'environnement
-                api_name = os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_INPAINT_WITH_MASK")
-                logger.info(f"Appel à l'API avec api_name={api_name}")
+                api_name = os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_INPAINT_WITH_MASK", "/inpaint_with_mask")
+                logger.info(f"Utilisation de l'API: {api_name}")
                 
-                # Appel à l'API Gradio avec les chaînes base64
+                result = self.client.predict(
+                    file(input_image_path),  # Utiliser file() pour envoyer le fichier
+                    file(mask_path),         # Utiliser file() pour envoyer le fichier
+                    api_name=api_name
+                )
+                logger.info(f"Résultat de l'API: {result}")
+            except Exception as e:
+                logger.error(f"Erreur lors de l'appel à l'API d'inpainting: {e}")
+                logger.exception(e)
+                return False, None
+            
+            # Vérifier si le résultat est valide
+            if result is not None and isinstance(result, str) and os.path.exists(result):
+                # Charger l'image résultante
+                logger.info(f"Chargement de l'image résultante: {result}")
                 try:
-                    # Essayer d'abord avec les arguments positionnels
-                    logger.info("Tentative d'appel à l'API avec les arguments positionnels")
-                    result = self.client.predict(
-                        img_base64,
-                        mask_base64,
-                        api_name=api_name
-                    )
+                    result_image = np.array(Image.open(result))
+                    logger.info(f"Image résultante chargée, forme: {result_image.shape}")
+                    logger.info("=== FIN inpaint (succès) ===")
+                    return True, result_image
                 except Exception as e:
-                    logger.error(f"Erreur lors de l'appel à l'API avec les arguments positionnels: {str(e)}")
-                    # Si ça échoue, essayer avec les arguments nommés
-                    logger.info("Tentative d'appel à l'API avec les arguments nommés")
-                    result = self.client.predict(
-                        input_image=img_base64,
-                        input_mask=mask_base64,
-                        api_name=api_name
-                    )
-                
-                # Vérifier le résultat
+                    logger.error(f"Erreur lors du chargement de l'image résultante: {e}")
+                    logger.exception(e)
+                    return False, None
+            else:
                 if result is None:
                     logger.error("L'API a retourné None")
-                    return False, input_image_np
+                elif not isinstance(result, str):
+                    logger.error(f"L'API a retourné un type inattendu: {type(result)}")
+                else:
+                    logger.error(f"Le fichier de résultat n'existe pas: {result}")
+                return False, None
                 
-                # Si le résultat est une chaîne (base64 ou URL), charger l'image
-                if isinstance(result, str):
-                    logger.info(f"Résultat reçu sous forme de chaîne (longueur: {len(result)})")
-                    try:
-                        if result.startswith(('http://', 'https://')):
-                            # Charger depuis URL
-                            response = requests.get(result)
-                            if response.status_code == 200:
-                                result_image = np.array(Image.open(BytesIO(response.content)))
-                            else:
-                                raise ValueError(f"Échec du téléchargement de l'image: {response.status_code}")
-                        elif result.startswith('data:image'):
-                            # Extraire la partie base64 de la chaîne data URL
-                            base64_data = result.split(',')[1]
-                            img_data = base64.b64decode(base64_data)
-                            result_image = np.array(Image.open(BytesIO(img_data)))
-                        else:
-                            # Essayer de décoder comme base64
-                            try:
-                                img_data = base64.b64decode(result)
-                                result_image = np.array(Image.open(BytesIO(img_data)))
-                            except:
-                                logger.warning("Impossible de décoder comme base64, essai de chargement comme fichier")
-                                if os.path.exists(result):
-                                    result_image = cv2.imread(result)
-                                    result_image = cv2.cvtColor(result_image, cv2.COLOR_BGR2RGB)
-                                else:
-                                    raise ValueError(f"Format de résultat non reconnu: {result[:100]}...")
-                            
-                        if result_image is None:
-                            raise ValueError("Impossible de décoder l'image résultante")
-                            
-                        return True, result_image
-                    except Exception as load_error:
-                        logger.error(f"Erreur lors du chargement du résultat: {load_error}")
-                        return False, input_image_np
-                
-                # Si le résultat est déjà un array numpy
-                if isinstance(result, np.ndarray):
-                    logger.info(f"Résultat reçu sous forme de numpy array: {result.shape}")
-                    return True, result
-                    
-                # Format non géré
-                logger.error(f"Format de résultat non géré: {type(result)}")
-                return False, input_image_np
-                
-            except Exception as api_error:
-                logger.error(f"Erreur lors de l'appel à l'API: {str(api_error)}")
-                logger.exception(api_error)  # Log la stack trace complète
-                return False, input_image_np
-            
         except Exception as e:
-            logger.error(f"Erreur lors de l'inpainting: {str(e)}")
-            logger.exception(e)  # Log la stack trace complète
-            return False, np.array(input_image)
+            logger.error(f"Erreur inattendue lors de l'inpainting: {e}")
+            logger.exception(e)
+            return False, None
+        
+        logger.info("=== FIN inpaint (échec) ===")
+        return False, None
 
     def _prepare_image_for_api(self, image, prefix="img_", is_mask=False):
         """
@@ -426,62 +445,158 @@ class WatermakRemovalClient:
         Returns:
             str: Chemin vers le fichier temporaire créé
         """
+        logger.info(f"=== DÉBUT _prepare_image_for_api (prefix={prefix}, is_mask={is_mask}) ===")
+        logger.info(f"Type de l'image à préparer: {type(image)}")
+        
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix=prefix).name
+        logger.info(f"Fichier temporaire créé: {temp_file}")
         
         # Cas 1: Image est déjà un chemin de fichier
         if isinstance(image, str) and (os.path.exists(image) or image.startswith('http')):
+            logger.info(f"L'image est un chemin: {image}")
             if os.path.exists(image):
                 # Copier le fichier local
-                img = cv2.imread(image)
-                cv2.imwrite(temp_file, img)
+                logger.info(f"Copie du fichier local: {image}")
+                try:
+                    img = cv2.imread(image)
+                    if img is None:
+                        logger.error(f"Impossible de lire l'image avec cv2.imread: {image}")
+                        # Essayer avec PIL
+                        pil_img = Image.open(image)
+                        pil_img.save(temp_file)
+                        logger.info(f"Image copiée avec PIL: {image} -> {temp_file}")
+                    else:
+                        cv2.imwrite(temp_file, img)
+                        logger.info(f"Image copiée avec cv2: {image} -> {temp_file}")
+                except Exception as e:
+                    logger.error(f"Erreur lors de la copie du fichier local: {e}")
+                    logger.exception(e)
+                    raise
             else:
                 # Télécharger l'URL
-                response = requests.get(image)
-                img = Image.open(BytesIO(response.content))
-                img.save(temp_file)
+                logger.info(f"Téléchargement de l'URL: {image}")
+                try:
+                    response = requests.get(image)
+                    img = Image.open(BytesIO(response.content))
+                    img.save(temp_file)
+                    logger.info(f"Image téléchargée: {image} -> {temp_file}")
+                except Exception as e:
+                    logger.error(f"Erreur lors du téléchargement de l'URL: {e}")
+                    logger.exception(e)
+                    raise
+            logger.info(f"=== FIN _prepare_image_for_api (chemin) ===")
             return temp_file
         
         # Cas 2: Image est un tableau numpy
         elif isinstance(image, np.ndarray):
-            if is_mask:
-                # Assurer que le masque est en niveaux de gris
-                if len(image.shape) > 2 and image.shape[2] > 1:
-                    image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-                # Normaliser entre 0 et 255
-                if image.max() <= 1.0:
-                    image = (image * 255).astype(np.uint8)
-            
-            # Sauvegarder l'image
-            if is_mask and len(image.shape) == 2:
-                cv2.imwrite(temp_file, image)
-            else:
-                if len(image.shape) == 3 and image.shape[2] == 3:
-                    # Image RGB
-                    cv2.imwrite(temp_file, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+            logger.info(f"L'image est un tableau numpy de forme {image.shape}")
+            try:
+                if is_mask:
+                    # Assurer que le masque est en niveaux de gris
+                    if len(image.shape) > 2 and image.shape[2] > 1:
+                        logger.info("Conversion du masque en niveaux de gris")
+                        image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+                    # Normaliser entre 0 et 255
+                    if image.max() <= 1.0:
+                        logger.info("Normalisation du masque entre 0 et 255")
+                        image = (image * 255).astype(np.uint8)
+                
+                # Sauvegarder l'image
+                if is_mask and len(image.shape) == 2:
+                    logger.info("Sauvegarde du masque en niveaux de gris")
+                    cv2.imwrite(temp_file, image)
                 else:
-                    # Autres formats
-                    Image.fromarray(image).save(temp_file)
+                    if len(image.shape) == 3 and image.shape[2] == 3:
+                        # Image RGB
+                        logger.info("Sauvegarde de l'image RGB")
+                        cv2.imwrite(temp_file, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+                    else:
+                        # Autres formats
+                        logger.info("Sauvegarde de l'image avec PIL")
+                        Image.fromarray(image).save(temp_file)
+                logger.info(f"Image numpy sauvegardée: {temp_file}")
+            except Exception as e:
+                logger.error(f"Erreur lors de la sauvegarde du tableau numpy: {e}")
+                logger.exception(e)
+                raise
+            logger.info(f"=== FIN _prepare_image_for_api (numpy) ===")
             return temp_file
         
         # Cas 3: Image est un objet PIL
         elif isinstance(image, Image.Image):
-            image.save(temp_file)
+            logger.info(f"L'image est un objet PIL.Image de mode {image.mode} et taille {image.size}")
+            try:
+                image.save(temp_file)
+                logger.info(f"Image PIL sauvegardée: {temp_file}")
+            except Exception as e:
+                logger.error(f"Erreur lors de la sauvegarde de l'image PIL: {e}")
+                logger.exception(e)
+                raise
+            logger.info(f"=== FIN _prepare_image_for_api (PIL) ===")
             return temp_file
         
         # Cas 4: Image est un dictionnaire (cas de l'éditeur Gradio)
         elif isinstance(image, dict):
-            if 'composite' in image:
-                img_array = image['composite']
-                Image.fromarray(img_array).save(temp_file)
-                return temp_file
-            elif 'layers' in image and image['layers']:
-                # Prendre la première couche ou la dernière selon le contexte
-                layer = image['layers'][-1 if is_mask else 0]['content']
-                Image.fromarray(layer).save(temp_file)
-                return temp_file
-            
+            logger.info(f"L'image est un dictionnaire avec clés {list(image.keys())}")
+            try:
+                if 'composite' in image and isinstance(image['composite'], np.ndarray):
+                    logger.info("Utilisation de la clé 'composite' (numpy array)")
+                    img_array = image['composite']
+                    Image.fromarray(img_array).save(temp_file)
+                    logger.info(f"Image composite sauvegardée: {temp_file}")
+                    return temp_file
+                elif 'composite' in image and isinstance(image['composite'], Image.Image):
+                    logger.info("Utilisation de la clé 'composite' (PIL.Image)")
+                    image['composite'].save(temp_file)
+                    logger.info(f"Image composite sauvegardée: {temp_file}")
+                    return temp_file
+                elif 'background' in image and isinstance(image['background'], Image.Image):
+                    logger.info("Utilisation de la clé 'background' (PIL.Image)")
+                    image['background'].save(temp_file)
+                    logger.info(f"Image background sauvegardée: {temp_file}")
+                    return temp_file
+                elif 'layers' in image and image['layers'] and isinstance(image['layers'], list):
+                    # Prendre la première couche ou la dernière selon le contexte
+                    layer_index = -1 if is_mask else 0
+                    logger.info(f"Utilisation de la couche {layer_index} (is_mask={is_mask})")
+                    
+                    if isinstance(image['layers'][layer_index], dict) and 'content' in image['layers'][layer_index]:
+                        layer_content = image['layers'][layer_index]['content']
+                        if isinstance(layer_content, np.ndarray):
+                            Image.fromarray(layer_content).save(temp_file)
+                            logger.info(f"Image de la couche sauvegardée: {temp_file}")
+                            return temp_file
+                        elif isinstance(layer_content, Image.Image):
+                            layer_content.save(temp_file)
+                            logger.info(f"Image de la couche sauvegardée: {temp_file}")
+                            return temp_file
+                    else:
+                        logger.error(f"Format de couche non reconnu: {type(image['layers'][layer_index])}")
+                
+                # Si aucune des options ci-dessus n'a fonctionné, essayer de trouver une image dans le dictionnaire
+                for key, value in image.items():
+                    if isinstance(value, np.ndarray):
+                        logger.info(f"Utilisation de la clé '{key}' (numpy array)")
+                        Image.fromarray(value).save(temp_file)
+                        logger.info(f"Image sauvegardée: {temp_file}")
+                        return temp_file
+                    elif isinstance(value, Image.Image):
+                        logger.info(f"Utilisation de la clé '{key}' (PIL.Image)")
+                        value.save(temp_file)
+                        logger.info(f"Image sauvegardée: {temp_file}")
+                        return temp_file
+                
+                logger.error(f"Aucune image trouvée dans le dictionnaire")
+            except Exception as e:
+                logger.error(f"Erreur lors de la sauvegarde du dictionnaire: {e}")
+                logger.exception(e)
+                raise
+        
         # Cas d'erreur
-        raise ValueError(f"Format d'image non pris en charge: {type(image)}")
+        error_msg = f"Format d'image non pris en charge: {type(image)}"
+        logger.error(error_msg)
+        logger.info(f"=== FIN _prepare_image_for_api (erreur) ===")
+        raise ValueError(error_msg)
     
     def detect_and_inpaint(self, 
                           input_image: np.ndarray, 
@@ -528,4 +643,21 @@ class WatermakRemovalClient:
         except Exception as e:
             logger.error(f"Erreur lors de la détection et de l'inpainting: {str(e)}")
             raise Exception(f"Erreur lors de la détection et de l'inpainting: {str(e)}")
+    
+    def view_api(self) -> dict:
+        """
+        Récupère les informations sur l'API en appelant la méthode view_api du client Gradio.
+        
+        Returns:
+            dict: Un dictionnaire contenant les informations sur l'API
+        """
+        logger.info("Récupération des informations sur l'API via client.view_api()")
+        
+        try:
+            # Appeler directement la méthode view_api du client Gradio
+            return self.client.view_api(return_format="dict")
+        except Exception as e:
+            logger.error(f"Erreur lors de l'appel à client.view_api(): {e}")
+            # Renvoyer un dictionnaire vide en cas d'erreur
+            return {"error": f"Impossible d'accéder aux informations de l'API: {str(e)}"}
     

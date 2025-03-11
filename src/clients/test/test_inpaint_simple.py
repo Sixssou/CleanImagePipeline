@@ -11,6 +11,7 @@ import sys
 from PIL import Image
 import numpy as np
 from dotenv import load_dotenv
+from src.clients.watermak_removal_client import WatermakRemovalClient
 import logging
 
 # Ajouter le répertoire parent au chemin de recherche des modules
@@ -28,62 +29,39 @@ load_dotenv()
 
 def main():
     # Vérifier les arguments
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} <chemin_image> <chemin_masque>")
+    if len(sys.argv) < 3:
+        logger.error("Usage: python -m src.clients.test.test_inpaint_simple <image_path> <mask_path>")
         sys.exit(1)
-        
+    
     image_path = sys.argv[1]
     mask_path = sys.argv[2]
     
-    # Vérifier que les fichiers existent
-    if not os.path.exists(image_path):
-        logger.error(f"Le fichier image {image_path} n'existe pas")
-        sys.exit(1)
-        
-    if not os.path.exists(mask_path):
-        logger.error(f"Le fichier masque {mask_path} n'existe pas")
-        sys.exit(1)
-    
-    # Importer le client
-    try:
-        from src.clients.watermak_removal_client import WatermakRemovalClient
-    except ImportError:
-        logger.error("Impossible d'importer WatermakRemovalClient. Vérifiez que vous êtes dans le bon répertoire.")
-        sys.exit(1)
-    
-    # Charger les images
+    # Charger l'image et le masque
     try:
         input_image = Image.open(image_path)
         logger.info(f"Image chargée: {image_path}, taille: {input_image.size}, mode: {input_image.mode}")
-    except Exception as e:
-        logger.error(f"Erreur lors du chargement de l'image: {str(e)}")
-        sys.exit(1)
         
-    try:
         mask = Image.open(mask_path)
         logger.info(f"Masque chargé: {mask_path}, taille: {mask.size}, mode: {mask.mode}")
+        
+        # Convertir le masque en mode L si nécessaire
+        if mask.mode != "L":
+            mask = mask.convert("L")
+            logger.info(f"Masque converti en mode L")
     except Exception as e:
-        logger.error(f"Erreur lors du chargement du masque: {str(e)}")
+        logger.error(f"Erreur lors du chargement des images: {e}")
         sys.exit(1)
-    
-    # Convertir le masque en mode L (niveaux de gris) si nécessaire
-    if mask.mode != 'L':
-        logger.info(f"Conversion du masque du mode {mask.mode} au mode L (niveaux de gris)")
-        mask = mask.convert('L')
     
     # Initialiser le client
-    hf_token = os.getenv("HF_TOKEN")
-    space_url = os.getenv("HF_SPACE_WATERMAK_REMOVAL")
-    
-    if not hf_token or not space_url:
-        logger.error("Les variables d'environnement HF_TOKEN et/ou HF_SPACE_WATERMAK_REMOVAL ne sont pas définies")
-        sys.exit(1)
-        
+    space_url = os.getenv("WATERMAK_REMOVAL_SPACE_URL", "https://cyrilar-watermak-removal.hf.space")
     logger.info(f"Initialisation du client avec space_url={space_url}")
-    client = WatermakRemovalClient(hf_token, space_url)
+    client = WatermakRemovalClient(hf_token=None, space_url=space_url)
     
-    # Appeler la fonction inpaint
-    logger.info("Appel de la fonction inpaint")
+    # Afficher les informations sur l'API
+    print("=== Visualisation de l'API d'inpainting ===")
+    api_info = client.view_api()
+    
+    # Effectuer l'inpainting
     success, result = client.inpaint(input_image, mask)
     
     # Vérifier le résultat
@@ -109,10 +87,10 @@ def main():
         result_image.save(output_path)
         logger.info(f"Résultat sauvegardé: {output_path}")
     else:
-        logger.error(f"Type de résultat non pris en charge: {type(result)}")
+        logger.error(f"Type de résultat inattendu: {type(result)}")
         sys.exit(1)
-        
-    logger.info("Test réussi!")
+    
+    logger.info("Test d'inpainting terminé avec succès")
     
 if __name__ == "__main__":
     main() 
