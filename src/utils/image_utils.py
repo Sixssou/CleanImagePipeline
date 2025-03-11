@@ -147,46 +147,27 @@ def save_temp_image(image, prefix="img"):
     return output_path
 
 def add_watermark_to_image(image, watermark_text):
-    """
-    Ajoute un filigrane (texte) à une image.
-    
-    Args:
-        image: Image PIL, numpy array ou chemin de fichier
-        watermark_text: Texte du filigrane
-        
-    Returns:
-        PIL.Image.Image: Image avec filigrane
-    """
-    # Convertir en PIL Image si nécessaire
-    if isinstance(image, str):
-        img = Image.open(image)
-    elif isinstance(image, np.ndarray):
-        img = Image.fromarray(image)
-    elif isinstance(image, Image.Image):
-        img = image.copy()
-    else:
-        raise ValueError(f"Type d'image non pris en charge: {type(image)}")
-    
-    # Créer un objet Draw
+    # Créer une copie de l'image
+    img = image.copy()
     draw = ImageDraw.Draw(img)
     
-    # Charger une police (utilisez une police système par défaut)
-    try:
-        font = ImageFont.truetype("arial.ttf", 36)
-    except IOError:
-        font = ImageFont.load_default()
+    # Définir la police et la taille
+    font_size = int(min(img.size) * 0.05)  # 5% de la plus petite dimension
+    font = ImageFont.truetype("arial.ttf", font_size)
     
-    # Obtenir la taille du texte
-    text_width, text_height = draw.textsize(watermark_text, font=font)
+    # Obtenir les dimensions du texte (utiliser textbbox au lieu de textsize)
+    bbox = draw.textbbox((0, 0), watermark_text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
     
-    # Positionner le texte en bas à droite
-    x = img.width - text_width - 10
-    y = img.height - text_height - 10
+    # Calculer la position du texte (centré et en bas)
+    x = (img.size[0] - text_width) // 2
+    y = img.size[1] - text_height - 10  # 10 pixels du bas
     
-    # Dessiner une ombre semi-transparente
+    # Ajouter le texte avec une ombre légère pour la lisibilité
+    # Ombre
     draw.text((x+2, y+2), watermark_text, font=font, fill=(0, 0, 0, 128))
-    
-    # Dessiner le texte
+    # Texte principal
     draw.text((x, y), watermark_text, font=font, fill=(255, 255, 255, 192))
     
     return img 

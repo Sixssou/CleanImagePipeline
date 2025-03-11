@@ -30,6 +30,10 @@ load_dotenv()
 pipeline = None
 sheet_name = None  # Variable globale pour stocker le nom de l'onglet
 
+# Définir les variables d'état pour le suivi des images
+current_image_index = gr.State(value=0)  # Index de l'image actuelle
+remaining_images = gr.State(value=[])    # Liste des images restantes à traiter
+
 def initialize_clients():
     """
     Initialise et retourne les clients nécessaires pour l'application.
@@ -354,18 +358,65 @@ def process_edited_image(current_idx, images, index, edited_image, edited_mask=N
         
         # Traitement du masque édité (extrait de l'ImageEditor)
         actual_mask = None
+        
         if edited_mask is not None:
-            # Si edited_mask est un dictionnaire (ce qui est le cas avec l'ImageEditor)
-            if isinstance(edited_mask, dict) and "composite" in edited_mask:
-                logger.info("Utilisation du masque composite de l'ImageEditor")
-                actual_mask = edited_mask["composite"]
+            logger.info(f"Type de données reçues du masque édité: {type(edited_mask)}")
+            
+            # Extraction du masque à partir de l'éditeur d'image
+            if isinstance(edited_mask, dict):
+                logger.info(f"Clés disponibles dans le masque: {edited_mask.keys()}")
+                
+                # Essayer d'extraire le masque à partir du premier calque
+                if "layers" in edited_mask and edited_mask["layers"]:
+                    logger.info(f"Nombre de calques: {len(edited_mask['layers'])}")
+                    
+                    # Extraire le premier calque (contenant le dessin utilisateur)
+                    first_layer = edited_mask["layers"][0]
+                    logger.info(f"Type du premier calque: {type(first_layer)}")
+                    
+                    try:
+                        # Convertir directement le premier calque en masque
+                        from PIL import Image
+                        import numpy as np
+                        from src.utils.image_utils import convert_to_pil_image
+                        
+                        # Tenter de convertir le calque en image PIL
+                        mask_image = convert_to_pil_image(first_layer)
+                        
+                        # Convertir en niveau de gris si nécessaire
+                        if mask_image.mode != 'L':
+                            mask_image = mask_image.convert('L')
+                        
+                        # Vérifier que le masque contient des pixels blancs
+                        mask_array = np.array(mask_image)
+                        white_pixels = np.sum(mask_array > 128)
+                        total_pixels = mask_array.size
+                        white_percentage = (white_pixels / total_pixels) * 100
+                        
+                        logger.info(f"Masque extrait du premier calque: {white_pixels} pixels blancs ({white_percentage:.2f}%)")
+                        
+                        if white_pixels > 0:
+                            actual_mask = mask_image
+                            # Enregistrer le masque pour débogage
+                            mask_debug_path = os.path.join(TEMP_DIR, f"debug_edit_mask_{idx}.png")
+                            mask_image.save(mask_debug_path)
+                            logger.info(f"Masque enregistré pour débogage: {mask_debug_path}")
+                        else:
+                            logger.warning("Le masque ne contient aucun pixel blanc - aucune zone à traiter")
+                    except Exception as e:
+                        logger.error(f"Erreur lors de l'extraction du masque du premier calque: {e}")
+                
+                # Si l'extraction du premier calque a échoué, essayer avec le composite
+                if actual_mask is None and "composite" in edited_mask:
+                    logger.info("Utilisation du masque composite de l'ImageEditor")
+                    actual_mask = edited_mask["composite"]
             else:
                 logger.info("Utilisation du masque édité directement")
                 actual_mask = edited_mask
             
             # Vérification que le masque est bien défini
             if actual_mask is None:
-                logger.warning("Le masque édité est None, utilisation du résultat automatique")
+                logger.warning("Le masque édité n'a pas pu être extrait, utilisation du résultat automatique")
         
         # Si un masque édité a été fourni, utiliser apply_manual_edits sans fournir inpainted_result
         # pour forcer l'appel à l'API d'inpainting
@@ -389,24 +440,24 @@ def process_edited_image(current_idx, images, index, edited_image, edited_mask=N
                 index=idx,
                 image_url=image_url,
                 edited_mask=None,
-                inpainted_result=inpainted_image,
+                inpainted_result=edited_image,
                 remove_background=remove_bg_option,
                 add_watermark=add_watermark_option,
                 watermark_text=watermark_text,
                 sheet_name=sheet_name
             )
         
-        if result:
-            # Mise à jour de l'image traitée dans la liste
-            images[current_idx] = (idx, image_url, original_image, mask, inpainted_image, final_image, remove_bg_option)
-            return current_idx, images, result, gr.update(visible=True), gr.update(visible=True), gr.update(visible=True)
-        else:
-            return current_idx, images, "Le traitement a échoué", gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+        # Mettre à jour l'image traitée dans notre liste
+        images[current_idx] = (idx, image_url, original_image, mask, inpainted_image, result, True)
+        
+        # Afficher le masque extrait et l'image résultante
+        vis_mask = visualize_mask(actual_mask) if actual_mask is not None else visualize_mask(mask)
+        return current_idx, images, "Traitement terminé", vis_mask, result, gr.update(visible=True)
     
     except Exception as e:
-        logger.error(f"Erreur lors du traitement de l'image: {str(e)}")
-        logger.exception(e)
-        return current_idx, images, f"Erreur: {str(e)}", gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+        logger.error(f"Erreur lors du traitement de l'image éditée: {e}")
+        logger.exception("Exception détaillée:")
+        return current_idx, images, f"Erreur: {str(e)}", None, None, gr.update(visible=False)
 
 def validate_automatic_processing(current_idx, images, remove_bg_option=False, add_watermark_option=True, watermark_text="www.inflatable-store.com"):
     """
@@ -812,8 +863,16 @@ with gr.Blocks() as interfaces:
                                                 label="Maximal bbox percent")
                         bbox_enlargement_factor = gr.Slider(minimum=1, maximum=10, value=1.5, step=0.1,
                                                 label="Facteur d'agrandissement des bbox")
-                        remove_background_option = gr.Checkbox(label="Supprimer l'arrière-plan", value=False)
-                        add_watermark_option = gr.Checkbox(label="Ajouter un watermark", value=True)
+                        remove_background_option = gr.Checkbox(
+                            label="Supprimer l'arrière-plan",
+                            value=False,  # Décoché par défaut
+                            info="Supprime l'arrière-plan de l'image après le traitement"
+                        )
+                        add_watermark_option = gr.Checkbox(
+                            label="Ajouter un filigrane",
+                            value=False,  # Décoché par défaut
+                            info="Ajoute un filigrane sur l'image traitée"
+                        )
                         watermark_text = gr.Textbox(label="Texte du watermark", value="www.inflatable-store.com", visible=True)
                         remove_watermark_iterations = gr.Slider(minimum=1, maximum=10, value=1, step=1,
                                                 label="Nombre d'itérations d'inpainting")
@@ -912,10 +971,37 @@ with gr.Blocks() as interfaces:
                                 with gr.Column(scale=2):
                                     gr.Markdown("#### Dessinez votre masque sur cette image:")
                                     image_editor = gr.ImageEditor(
-                                        label="Dessinez en blanc sur les zones de watermark restantes",
-                                        brush=gr.Brush(colors=["#FFFFFF"], default_size=10, default_color="#FFFFFF")
+                                        label="Éditeur d'image"
                                     )
+                                    
+                                    gr.Markdown("""
+                                    **Instructions pour créer un masque:**
+                                    1. Dessinez en **BLANC** sur les zones du filigrane à supprimer
+                                    2. Utilisez l'outil gomme pour corriger les erreurs
+                                    3. Les zones blanches seront remplacées par l'inpainting
+                                    """)
+                                    
+                                    with gr.Row():
+                                        # Outil pour réinitialiser le masque
+                                        reset_editor_btn = gr.Button("Réinitialiser le masque")
+                                        # Bouton de validation de l'édition
+                                        validate_edit = gr.Button("Valider édition manuelle", variant="primary")
                     
+                    # Fonction pour réinitialiser l'éditeur
+                    def reset_editor(current_idx, images):
+                        if current_idx < 0 or current_idx >= len(images):
+                            return None
+                        
+                        _, _, _, _, inpainted_image, _, _ = images[current_idx]
+                        return inpainted_image
+                    
+                    # Connecter le bouton de réinitialisation
+                    reset_editor_btn.click(
+                        fn=reset_editor,
+                        inputs=[current_image_index, remaining_images],
+                        outputs=[image_editor]
+                    )
+
                     # Résultats après traitement
                     with gr.Row(visible=False) as results_row:
                         processed_mask = gr.Image(
@@ -931,8 +1017,8 @@ with gr.Blocks() as interfaces:
                         )
             
             # Variables d'état pour gérer le flux de traitement
-            current_image_index = gr.State(0)
-            remaining_images = gr.State([])
+            current_image_index = gr.State(value=0)
+            remaining_images = gr.State(value=[])
             
             # Connecter les événements
             launch_pipeline_manual.click(

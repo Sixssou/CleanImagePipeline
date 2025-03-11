@@ -260,7 +260,8 @@ class CleanImagePipeline:
             result_path = None
             
             # Si l'inpainting a déjà été effectué et qu'on utilise ce résultat
-            if inpainted_result is not None:
+            if inpainted_result is not None and edited_mask is None:
+                # Mode automatique - utiliser directement le résultat de l'inpainting
                 logger.info("Utilisation du résultat d'inpainting existant")
                 # Convertir en image PIL si nécessaire
                 if isinstance(inpainted_result, np.ndarray):
@@ -297,8 +298,28 @@ class CleanImagePipeline:
             # Si un masque édité a été fourni, appliquer l'inpainting manuellement
             elif edited_mask is not None:
                 logger.info("Application de l'inpainting avec le masque édité manuellement")
-                # Télécharger l'image source
-                image_source = download_image(image_url)
+                
+                # Déterminer l'image source à utiliser
+                if inpainted_result is not None:
+                    # Utiliser le résultat de l'inpainting automatique comme base
+                    logger.info("Utilisation du résultat d'inpainting automatique comme base pour l'édition manuelle")
+                    
+                    # Convertir inpainted_result en image si nécessaire
+                    if isinstance(inpainted_result, np.ndarray):
+                        image_source = Image.fromarray(inpainted_result)
+                    elif isinstance(inpainted_result, Image.Image):
+                        image_source = inpainted_result
+                    elif isinstance(inpainted_result, str):
+                        # Si c'est un chemin ou une URL
+                        image_source = download_image(inpainted_result)
+                    else:
+                        logger.warning(f"Format non reconnu pour inpainted_result: {type(inpainted_result)}, utilisation de l'image originale")
+                        image_source = download_image(image_url)
+                else:
+                    # Utiliser l'image originale comme base
+                    logger.info("Utilisation de l'image originale comme base pour l'édition manuelle")
+                    image_source = download_image(image_url)
+                
                 logger.info(f"Image source téléchargée, type: {type(image_source)}")
                 
                 # Appliquer les modifications manuelles (inpainting)
@@ -316,10 +337,7 @@ class CleanImagePipeline:
                     return None
                 
                 logger.info(f"Inpainting manuel appliqué: {result_path}")
-            else:
-                logger.error("Ni masque édité ni résultat d'inpainting fourni")
-                return None
-                
+            
             # Supprimer l'arrière-plan si demandé
             if remove_background and result_path:
                 try:
@@ -380,7 +398,6 @@ class CleanImagePipeline:
                     os.remove(result_path)
                 except:
                     pass
-                
                 return image_url_processed
             else:
                 return None
