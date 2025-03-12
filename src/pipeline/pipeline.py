@@ -431,6 +431,8 @@ class CleanImagePipeline:
             if sheet_name and self.gsheet_client:
                 try:
                     logger.info(f"Enregistrement dans Google Sheet demandé pour {result_path} dans la feuille: {sheet_name}")
+                    logger.info(f"Type de sheet_name: {type(sheet_name)}")
+                    logger.info(f"Valeur de index: {index}, type: {type(index)}")
                     
                     # Construire le lien Shopify si disponible
                     shopify_url = ""
@@ -447,16 +449,24 @@ class CleanImagePipeline:
                         except Exception as e:
                             logger.error(f"Erreur lors de l'upload sur Shopify: {str(e)}")
                     
-                    # Ajouter l'entrée dans Google Sheet
-                    self.gsheet_client.add_entry(
-                        sheet_name=sheet_name,
-                        original_url=image_url,
-                        processed_url=shopify_url,
-                        local_path=result_path
-                    )
-                    logger.info(f"Entrée ajoutée dans Google Sheet: {sheet_name}")
+                    # Mettre à jour la cellule dans Google Sheet avec l'URL Shopify
+                    if shopify_url:
+                        logger.info(f"Tentative d'écriture dans Google Sheet: feuille={sheet_name}, cellule=B{index}, valeur={shopify_url}")
+                        # Vérifier si la feuille existe
+                        try:
+                            # Tester si on peut accéder à la feuille
+                            test_read = self.gsheet_client.read_cells(sheet_name, "A1")
+                            logger.info(f"Test de lecture de la feuille {sheet_name} réussi: {test_read}")
+                        except Exception as e:
+                            logger.error(f"Erreur lors du test de lecture de la feuille {sheet_name}: {str(e)}")
+                        
+                        # Écrire dans la cellule
+                        self.gsheet_client.write_cells(sheet_name, f"B{index}", [[shopify_url]])
+                        logger.info(f"URL mise à jour dans Google Sheet: {sheet_name}, cellule B{index}")
                 except Exception as e:
-                    logger.error(f"Erreur lors de l'enregistrement dans Google Sheet: {str(e)}")
+                    logger.error(f"Erreur lors de l'enregistrement dans Google Sheet: {sheet_name}")
+                    logger.error(f"Détails de l'erreur: {str(e)}")
+                    logger.exception(e)
             
             logger.info(f"=== FIN process_edited_image (result_path={result_path}) ===")
             return result_path

@@ -74,45 +74,48 @@ class ImageProcessor:
     
     def inpaint_image(self, image, mask):
         """
-        Effectue l'inpainting d'une image en utilisant un masque.
+        Effectue l'inpainting d'une image en utilisant un masque fourni.
         
         Args:
-            image: Image d'entrée (PIL.Image ou np.ndarray ou chemin)
-            mask: Masque binaire (PIL.Image ou np.ndarray ou chemin)
+            image: Image à traiter (PIL.Image ou np.ndarray)
+            mask: Masque binaire (PIL.Image ou np.ndarray)
             
         Returns:
-            Tuple[bool, np.ndarray]: (succès, image inpaintée)
+            Tuple[bool, np.ndarray]: (succès, image traitée)
         """
         if not self.watermak_removal_client:
             raise ValueError("Le client de suppression de watermarks n'est pas défini")
         
         try:
-            # Convertir en PIL Image si nécessaire
-            if isinstance(image, str):
-                image = Image.open(image)
-            elif isinstance(image, np.ndarray):
-                image = Image.fromarray(image)
-                
-            if isinstance(mask, str):
-                mask = Image.open(mask)
-            elif isinstance(mask, np.ndarray):
-                mask = Image.fromarray(mask)
-                
-            # S'assurer que le masque est en mode L (niveaux de gris)
-            if mask.mode != "L":
-                mask = mask.convert("L")
-                
             return self.watermak_removal_client.inpaint(image, mask)
         except Exception as e:
             logger.error(f"Erreur lors de l'inpainting: {str(e)}")
             return False, None
     
-    def remove_background(self, image):
+    def add_watermark(self, image, watermark_text):
+        """
+        Ajoute un filigrane (watermark) à une image.
+        
+        Args:
+            image: L'image PIL sur laquelle ajouter le filigrane
+            watermark_text: Le texte à utiliser comme filigrane
+            
+        Returns:
+            Image: L'image PIL avec le filigrane
+        """
+        logger.info(f"Ajout d'un filigrane avec le texte: {watermark_text}")
+        try:
+            return add_watermark_to_image(image, watermark_text)
+        except Exception as e:
+            logger.error(f"Erreur lors de l'ajout du filigrane: {str(e)}")
+            return image
+    
+    def remove_background(self, image_url):
         """
         Supprime l'arrière-plan d'une image.
         
         Args:
-            image: Image d'entrée (PIL.Image ou np.ndarray ou chemin)
+            image_url: URL de l'image
             
         Returns:
             Tuple[bool, np.ndarray]: (succès, image sans arrière-plan)
@@ -122,11 +125,11 @@ class ImageProcessor:
             
         try:
             # Si l'entrée est un chemin ou une PIL Image, nous devons l'adapter
-            if isinstance(image, str):
-                return self.watermak_removal_client.remove_bg(image)
-            elif isinstance(image, Image.Image):
+            if isinstance(image_url, str):
+                return self.watermak_removal_client.remove_bg(image_url)
+            elif isinstance(image_url, Image.Image):
                 # Sauvegarder l'image temporairement
-                temp_path = save_temp_image(image, "bg_input")
+                temp_path = save_temp_image(image_url, "bg_input")
                 result = self.watermak_removal_client.remove_bg(temp_path)
                 
                 # Supprimer le fichier temporaire
@@ -136,9 +139,9 @@ class ImageProcessor:
                     pass
                     
                 return result
-            elif isinstance(image, np.ndarray):
+            elif isinstance(image_url, np.ndarray):
                 # Convertir numpy array en PIL Image
-                temp_path = save_temp_image(image, "bg_input")
+                temp_path = save_temp_image(image_url, "bg_input")
                 result = self.watermak_removal_client.remove_bg(temp_path)
                 
                 # Supprimer le fichier temporaire

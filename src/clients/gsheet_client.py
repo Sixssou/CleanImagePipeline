@@ -98,4 +98,33 @@ class GSheetClient:
         ws = self.spreadsheet.worksheet(worksheet_name)
         ws.append_row(row_values)
 
+    def add_entry(self, sheet_name: str, original_url: str, processed_url: str, local_path: str = None):
+        """
+        Ajoute une entrée dans la feuille de suivi avec les URLs et informations de traitement.
+        
+        Args:
+            sheet_name: Nom de l'onglet dans lequel ajouter l'entrée
+            original_url: URL de l'image originale
+            processed_url: URL de l'image traitée sur Shopify
+            local_path: Chemin local de l'image traitée (facultatif)
+        
+        Returns:
+            bool: True si l'opération a réussi, False sinon
+        """
+        try:
+            # Préparer les données à ajouter
+            row_data = [
+                original_url,      # URL originale
+                processed_url,     # URL traitée
+                local_path or ""   # Chemin local (optionnel)
+            ]
+            
+            # Ajouter la ligne à la feuille
+            self.append_row(sheet_name, row_data)
+            return True
+        except Exception as e:
+            from loguru import logger
+            logger.error(f"Erreur lors de l'ajout de l'entrée dans Google Sheet: {str(e)}")
+            return False
+
     # Vous pouvez rajouter d'autres méthodes utilitaires si besoin.

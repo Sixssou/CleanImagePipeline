@@ -348,3 +348,31 @@ class ShopifyClient:
                 return f"Échec de la connexion à l'API Shopify: {response.status_code} - {response.text}"
         except Exception as e:
             return f"Erreur lors de la tentative de connexion à l'API Shopify: {e}"
+    
+    def upload_file(self, local_file_path: str, file_name: str = None) -> str:
+        """
+        Télécharge un fichier sur Shopify et retourne l'URL
+        
+        Args:
+            local_file_path: Chemin local du fichier à télécharger
+            file_name: Nom du fichier à utiliser (facultatif, utilise le nom original si non fourni)
+            
+        Returns:
+            str: URL du fichier téléchargé sur Shopify ou chaîne vide en cas d'erreur
+        """
+        try:
+            from loguru import logger
+            logger.info(f"Téléchargement du fichier {local_file_path} sur Shopify")
+            
+            # Utiliser la méthode existante pour télécharger le fichier
+            shopify_url = self.upload_file_to_shopify(local_file_path)
+            
+            if shopify_url:
+                logger.info(f"Fichier téléchargé avec succès: {shopify_url}")
+                return shopify_url
+            else:
+                logger.error(f"Échec du téléchargement du fichier {local_file_path}")
+                return ""
+        except Exception as e:
+            logger.error(f"Erreur lors du téléchargement du fichier sur Shopify: {str(e)}")
+            return ""

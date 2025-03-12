@@ -100,13 +100,13 @@ def detect_wm(image_url: str,
     )
 
 def remove_wm(image_url, 
-              threshold=0.85, 
-              max_bbox_percent=10.0, 
-              remove_background_option=False, 
-              add_watermark_option=False, 
-              watermark=None,
-              bbox_enlargement_factor=1.5,
-              remove_watermark_iterations=1):
+                threshold=0.85, 
+                max_bbox_percent=10.0, 
+                remove_background_option=False, 
+                add_watermark_option=False, 
+                watermark=None,
+                bbox_enlargement_factor=1.5,
+                remove_watermark_iterations=1):
     """Supprime les watermarks d'une image"""
     if pipeline is None:
         initialize_clients()
@@ -346,18 +346,29 @@ def process_edited_image(current_idx, images, index, edited_image, edited_mask=N
     """
     if pipeline is None:
         initialize_clients()
-        
-    if 'gsheet_name' not in globals() or gsheet_name is None:
-        sheet_name = "Auto-processed"
+    
+    # Ajout de logs au début de la fonction
+    logger.info(f"=== DÉBUT process_edited_image ===")
+    logger.info(f"Arguments reçus: current_idx={current_idx}, edited_image_type={type(edited_image)}, edited_mask_type={type(edited_mask)}")
+    
+    # Vérification de la variable globale sheet_name
+    logger.info(f"Vérification de la variable globale sheet_name")
+    if 'sheet_name' in globals():
+        logger.info(f"Variable globale sheet_name trouvée: {sheet_name}")
+        sheet_name_to_use = sheet_name
     else:
-        sheet_name = gsheet_name
+        logger.info("Variable globale sheet_name non trouvée, utilisation de 'Auto-processed'")
+        sheet_name_to_use = "Auto-processed"
+    
+    logger.info(f"Nom de la feuille qui sera utilisée: {sheet_name_to_use}")
     
     try:
         if current_idx >= len(images) or current_idx < 0:
-            return current_idx, images, None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+            return current_idx, images, None, gr.update(visible=False), gr.update(visible=False)
         
         # Extraire les informations de l'image
         idx, image_url, original_image, mask, inpainted_image, final_image, _ = images[current_idx]
+        logger.info(f"Traitement de l'image à l'index {idx} (GSheet) / {current_idx} (liste)")
         
         # Traitement du masque édité (extrait de l'ImageEditor)
         actual_mask = None
@@ -420,6 +431,7 @@ def process_edited_image(current_idx, images, index, edited_image, edited_mask=N
             logger.info("Utilisation du masque édité pour appeler l'API d'inpainting")
             # MODIFICATION ICI: Nous passons l'image inpaintée comme paramètre inpainted_result
             # pour que la méthode process_edited_image utilise cette image comme base au lieu de l'image originale
+            logger.info(f"Appel de pipeline.process_edited_image avec sheet_name={sheet_name_to_use}")
             result = pipeline.process_edited_image(
                 index=idx,
                 image_url=image_url,
@@ -428,11 +440,12 @@ def process_edited_image(current_idx, images, index, edited_image, edited_mask=N
                 remove_background=remove_bg_option,
                 add_watermark=add_watermark_option,
                 watermark_text=watermark_text,
-                sheet_name=sheet_name
+                sheet_name=sheet_name_to_use
             )
         # Sinon, utiliser le résultat de l'inpainting automatique
         else:
             logger.info("Utilisation du résultat d'inpainting automatique")
+            logger.info(f"Appel de pipeline.process_edited_image avec sheet_name={sheet_name_to_use}")
             result = pipeline.process_edited_image(
                 index=idx,
                 image_url=image_url,
@@ -441,7 +454,7 @@ def process_edited_image(current_idx, images, index, edited_image, edited_mask=N
                 remove_background=remove_bg_option,
                 add_watermark=add_watermark_option,
                 watermark_text=watermark_text,
-                sheet_name=sheet_name
+                sheet_name=sheet_name_to_use
             )
         
         # Mettre à jour l'image traitée dans notre liste
@@ -449,13 +462,18 @@ def process_edited_image(current_idx, images, index, edited_image, edited_mask=N
         
         # Afficher le masque extrait et l'image résultante
         vis_mask = visualize_mask(actual_mask) if actual_mask is not None else visualize_mask(mask)
-        return current_idx, images, "Traitement terminé", vis_mask, result, gr.update(visible=True)
+        
+        # Rendre results_row visible (effet secondaire)
+        results_row.update(visible=True)
+        
+        # Retourner True pour le statut de visibilité au lieu de results_row
+        return current_idx, images, "Traitement terminé", vis_mask, True
     
     except Exception as e:
         logger.error(f"Erreur lors du traitement de l'image éditée: {str(e)}")
         import traceback
         traceback.print_exc()
-        return current_idx, images, f"Erreur: {str(e)}", gr.update(visible=False), gr.update(visible=False), gr.update(visible=True)
+        return current_idx, images, f"Erreur: {str(e)}", gr.update(visible=False), False
 
 def validate_automatic_processing(current_idx, images, remove_bg_option=False, add_watermark_option=True, watermark_text="www.inflatable-store.com"):
     """
@@ -476,12 +494,16 @@ def validate_automatic_processing(current_idx, images, remove_bg_option=False, a
     if pipeline is None:
         initialize_clients()
     
+    # Ajouter des logs au début
+    logger.info(f"=== DÉBUT validate_automatic_processing ===")
+    logger.info(f"Arguments reçus: current_idx={current_idx}, remove_bg_option={remove_bg_option}")
+    
     try:
         if current_idx >= len(images) or current_idx < 0:
-            return current_idx, images, None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+            return current_idx, images, None, gr.update(visible=False), gr.update(visible=False)
         
         # Extraire les informations de l'image
-        idx, image_url, original_image, mask, inpainted_image, final_image, _ = images[current_idx]
+        idx, image_url, original_image, mask, inpainted_image, final_image, bg_option = images[current_idx]
         
         # Utiliser le résultat de l'inpainting automatique
         result = pipeline.process_edited_image(
@@ -496,136 +518,118 @@ def validate_automatic_processing(current_idx, images, remove_bg_option=False, a
         )
         
         if result:
-            # Mise à jour de l'image traitée dans la liste avec l'URL de l'image uploadée
+            # Mise à jour de l'image traitée dans la liste
             images[current_idx] = (idx, image_url, original_image, mask, inpainted_image, final_image, remove_bg_option)
-            return current_idx, images, result, gr.update(visible=True), gr.update(visible=True), gr.update(visible=True)
+            
+            # Rendre results_row visible (effet secondaire)
+            results_row.update(visible=True)
+            
+            # Retourner True pour le statut de visibilité
+            return current_idx, images, result, gr.update(visible=True), True
         else:
-            return current_idx, images, "Le traitement a échoué", gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+            return current_idx, images, "Le traitement a échoué", gr.update(visible=False), False
     
     except Exception as e:
         logger.error(f"Erreur lors de la validation du traitement automatique: {str(e)}")
         logger.exception(e)
-        return current_idx, images, f"Erreur: {str(e)}", gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
+        return current_idx, images, f"Erreur: {str(e)}", gr.update(visible=False), False
 
 def next_image(current_idx, images):
     """
-    Passe à l'image suivante dans la liste des images à traiter.
+    Passe à l'image suivante dans la liste.
     
     Args:
         current_idx: Index actuel dans la liste d'images
         images: Liste des images à traiter
         
     Returns:
-        tuple: Informations sur l'image suivante
+        tuple: Informations pour mettre à jour l'interface
     """
     global pipeline
-    global sheet_name
+    if pipeline is None:
+        initialize_clients()
+    
     try:
-        # Vérifier s'il y a encore des images à traiter
-        if not images or len(images) == 0:
-            return (
-                current_idx,
-                images, 
-                "Aucune image à traiter",
-                None,
-                None,
-                None,
-                None,
-                False,
-                gr.update(visible=False),
-                gr.update(visible=False),
-                gr.update(visible=False)
-            )
-        
-        # Passer à l'image suivante
         next_idx = current_idx + 1
-        
-        # Si nous avons atteint la fin de la liste, revenir au début
         if next_idx >= len(images):
-            next_idx = 0
-        
-        # Récupérer les données de l'image suivante
-        if next_idx < len(images):
-            idx, image_url, original_image, mask_image, inpainted_image, final_image, bg_option = images[next_idx]
-            
-            # Vérifier si cette image a déjà été traitée ou s'il faut la traiter maintenant
-            if mask_image is None or inpainted_image is None or final_image is None:
-                try:
-                    # Appeler remove_wm pour l'image actuelle
-                    result = pipeline.image_processor.watermak_removal_client.remove_wm(
-                        image_url=image_url,
-                        threshold=0.85,
-                        max_bbox_percent=10.0,
-                        remove_background_option=False,
-                        add_watermark_option=False,
-                        watermark=None,
-                        bbox_enlargement_factor=1.5,
-                        remove_watermark_iterations=1
-                    )
-                    
-                    if not result or len(result) != 4:
-                        raise ValueError(f"Le traitement de l'image a échoué: {image_url}")
-                    
-                    # Extraire les résultats
-                    bg_removed_image, mask_image, inpainted_image, final_image = result
-                    
-                    # Convertir les images pour l'interface Gradio
-                    mask_pil = Image.fromarray(mask_image) if isinstance(mask_image, np.ndarray) else mask_image
-                    inpainted_pil = Image.fromarray(inpainted_image) if isinstance(inpainted_image, np.ndarray) else inpainted_image
-                    final_pil = Image.fromarray(final_image) if isinstance(final_image, np.ndarray) else final_image
-                    
-                    # Mettre à jour la liste des images avec l'image traitée
-                    images[next_idx] = (idx, image_url, original_image, mask_pil, inpainted_pil, final_pil, bg_option)
-                    
-                except Exception as e:
-                    logger.error(f"Erreur lors du traitement de l'image {image_url}: {str(e)}")
-                    logger.exception(e)
-                    return (
-                        current_idx,  # Rester sur l'image actuelle en cas d'erreur
-                        images,
-                        f"Erreur lors du traitement de l'image suivante: {str(e)}",
-                        None,
-                        None,
-                        None,
-                        None,
-                        False,
-                        gr.update(visible=False),
-                        gr.update(visible=False),
-                        gr.update(visible=False)
-                    )
-            
-            # Visualiser le masque en couleur pour une meilleure visibilité
-            colored_mask = visualize_mask(mask_image)
-            
-            return (
-                next_idx,
-                images,
-                f"Image {next_idx+1}/{len(images)} - Index {idx}",
-                original_image,
-                colored_mask,
-                inpainted_pil,  # Utiliser les objets PIL déjà convertis
-                final_pil,      # Utiliser les objets PIL déjà convertis
-                inpainted_pil,  # Ajouter inpainted_pil pour inpainted_preview
-                bg_option,
-                gr.update(visible=True),
-                gr.update(visible=True),
-                gr.update(visible=True)
-            )
-        else:
             return (
                 current_idx,
                 images,
                 "Toutes les images ont été traitées",
-                None, 
-                None,
-                None,
                 None,
                 False,
                 gr.update(visible=False),
                 gr.update(visible=False),
-                gr.update(visible=False)
+                None  # image_editor
             )
-    
+        
+        # Extraire les informations de l'image suivante
+        idx, image_url, original_image, mask, inpainted_image, final_image, bg_option = images[next_idx]
+        
+        # Si l'image n'a pas encore été traitée
+        if inpainted_image is None:
+            try:
+                # Appeler remove_wm pour l'image actuelle
+                result = pipeline.image_processor.watermak_removal_client.remove_wm(
+                    image_url=image_url,
+                    threshold=0.85,
+                    max_bbox_percent=10.0,
+                    remove_background_option=False,
+                    add_watermark_option=False,
+                    watermark=None,
+                    bbox_enlargement_factor=1.5,
+                    remove_watermark_iterations=1
+                )
+                
+                if not result or len(result) != 4:
+                    raise ValueError(f"Le traitement de l'image a échoué: {image_url}")
+                
+                # Extraire les résultats
+                bg_removed_image, mask_image, inpainted_image, final_image = result
+                
+                # Convertir les images pour l'interface Gradio
+                mask_pil = Image.fromarray(mask_image) if isinstance(mask_image, np.ndarray) else mask_image
+                inpainted_pil = Image.fromarray(inpainted_image) if isinstance(inpainted_image, np.ndarray) else inpainted_image
+                final_pil = Image.fromarray(final_image) if isinstance(final_image, np.ndarray) else final_image
+                
+                # Mettre à jour l'image dans la liste
+                images[next_idx] = (idx, image_url, original_image, mask_pil, inpainted_pil, final_pil, bg_option)
+                
+                return (
+                    next_idx,
+                    images,
+                    f"Image {next_idx+1}/{len(images)} - Index {idx}",
+                    inpainted_pil,   # image_editor
+                    bg_option,
+                    gr.update(visible=True),
+                    gr.update(visible=True),
+                    inpainted_pil   # image_editor
+                )
+            except Exception as e:
+                logger.error(f"Erreur lors du traitement de l'image {image_url}: {str(e)}")
+                logger.exception(e)
+                return (
+                    current_idx,  # Rester sur l'image actuelle en cas d'erreur
+                    images,
+                    f"Erreur lors du traitement de l'image suivante: {str(e)}",
+                    None,
+                    False,
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    None  # image_editor
+                )
+        else:
+            # L'image a déjà été traitée, utiliser les résultats existants
+            return (
+                next_idx,
+                images,
+                f"Image {next_idx+1}/{len(images)} - Index {idx}",
+                inpainted_image,
+                bg_option,
+                gr.update(visible=True),
+                gr.update(visible=True),
+                inpainted_image  # image_editor
+            )
     except Exception as e:
         logger.error(f"Erreur lors du passage à l'image suivante: {str(e)}")
         logger.exception(e)
@@ -634,13 +638,10 @@ def next_image(current_idx, images):
             images,
             f"Erreur: {str(e)}",
             None,
-            None,
-            None,
-            None,
             False,
             gr.update(visible=False),
             gr.update(visible=False),
-            gr.update(visible=False)
+            None  # image_editor
         )
 
 def start_manual_pipeline(image_count, sheet_name_param):
@@ -656,7 +657,29 @@ def start_manual_pipeline(image_count, sheet_name_param):
     """
     global pipeline
     global sheet_name  # Déclaration sur sa propre ligne
+    
+    logger.info(f"Démarrage du pipeline manuel avec sheet_name_param={sheet_name_param}")
+    
+    # Vérifier si la variable globale sheet_name existe déjà
+    if 'sheet_name' in globals():
+        logger.info(f"Variable globale sheet_name avant mise à jour: {sheet_name}")
+    else:
+        logger.info("Variable globale sheet_name n'existe pas encore")
+    
+    # Mise à jour de la variable globale
     sheet_name = sheet_name_param  # Stocker dans une variable globale
+    logger.info(f"Variable globale sheet_name après mise à jour: {sheet_name}")
+    
+    # Vérifier si la feuille existe dans Google Sheets
+    try:
+        if pipeline is None:
+            initialize_clients()
+        
+        # Tester si on peut accéder à la feuille
+        test_read = pipeline.gsheet_client.read_cells(sheet_name, "A1")
+        logger.info(f"Test de lecture de la feuille {sheet_name} réussi: {test_read}")
+    except Exception as e:
+        logger.error(f"Erreur lors du test de lecture de la feuille {sheet_name}: {str(e)}")
     
     images_to_process = clean_image_pipeline_manual(image_count, sheet_name)
     if not images_to_process:
@@ -673,22 +696,16 @@ def start_manual_pipeline(image_count, sheet_name_param):
             True,             # add_watermark_option
             "www.inflatable-store.com",  # watermark_text
             "Aucune image à traiter",    # result_status
-            None,             # original_image_display
-            None,             # mask_display
-            None,             # inpainted_image_display
-            None,             # final_image_display
-            None,             # processed_mask
             None,             # final_image
             gr.update(visible=False),  # results_row
             gr.update(visible=False),  # manual_edit_interface
-            gr.update(visible=False)  # current_image_index
+            0                 # current_image_index
         )
     
     # Préparer la première image
-    idx, url, original_image, bg_option = images_to_process[0]
-    
-    # Traiter la première image
     try:
+        idx, url, original_image, bg_option = images_to_process[0]
+        
         # Appeler remove_wm pour l'image actuelle
         result = pipeline.image_processor.watermak_removal_client.remove_wm(
             image_url=url,
@@ -721,9 +738,6 @@ def start_manual_pipeline(image_count, sheet_name_param):
             image_idx, image_url, image_original, image_bg_option = images_to_process[i]
             processed_images.append((image_idx, image_url, image_original, None, None, None, image_bg_option))
         
-        # Visualiser le masque en couleur pour une meilleure visibilité - utiliser mask_pil qui est déjà un objet PIL Image
-        colored_mask = visualize_mask(mask_pil)
-        
         return (
             f"Traitement de l'image {1}/{len(images_to_process)}",
             gr.update(visible=True),
@@ -736,16 +750,10 @@ def start_manual_pipeline(image_count, sheet_name_param):
             True,             # add_watermark_option
             "www.inflatable-store.com",  # watermark_text
             f"Image {1}/{len(images_to_process)} - Index GSheet: {idx}",  # result_status
-            original_image,   # original_image_display
-            colored_mask,     # mask_display
-            inpainted_pil,    # inpainted_image_display
-            final_pil,        # final_image_display
-            inpainted_pil,    # inpainted_preview (nouvel élément pour l'éditeur)
-            None,             # processed_mask (sera affiché après traitement)
-            None,             # final_image (sera affiché après traitement)
+            final_pil,        # final_image
             gr.update(visible=False),   # results_row
-            gr.update(visible=True),    # manual_edit_interface (répété)
-            0                 # current_image_index (répété)
+            gr.update(visible=True),    # manual_edit_interface
+            0                 # current_image_index
         )
     except Exception as e:
         logger.error(f"Erreur lors du traitement de la première image: {str(e)}")
@@ -762,17 +770,14 @@ def start_manual_pipeline(image_count, sheet_name_param):
             True,             # add_watermark_option
             "www.inflatable-store.com",  # watermark_text
             f"Erreur: {str(e)}",    # result_status
-            None,             # original_image_display
-            None,             # mask_display
-            None,             # inpainted_image_display
-            None,             # final_image_display
-            None,             # inpainted_preview
-            None,             # processed_mask
             None,             # final_image
             gr.update(visible=False),  # results_row
-            gr.update(visible=False),  # manual_edit_interface (répété)
-            0                 # current_image_index (répété)
-        )
+            gr.update(visible=False),  # manual_edit_interface
+            0                 # current_image_index
+    )
+
+def after_process(is_success):
+    return gr.update(visible=is_success)
 
 # Interface Gradio
 with gr.Blocks() as interfaces:
@@ -933,57 +938,33 @@ with gr.Blocks() as interfaces:
                         skip_image = gr.Button("Image suivante", variant="secondary")
                     
                     result_status = gr.Textbox(label="Résultat", value="")
-
+            
                 with gr.Column(scale=2):
-                    with gr.Tabs():
-                        with gr.TabItem("Détection automatique"):
-                            gr.Markdown("### Résultat de la détection automatique")
-                            with gr.Row():
-                                with gr.Column():
-                                    gr.Markdown("Image originale:")
-                                    original_image_display = gr.Image(label="", type="pil")
-                                with gr.Column():
-                                    gr.Markdown("Masque détecté:")
-                                    mask_display = gr.Image(label="", type="numpy")
+                    # Remplacer les tabs par l'éditeur manuel directement
+                    gr.Markdown("### Éditeur de masque")
+                    gr.Markdown("""Pour effectuer une édition manuelle:
+                    1. Dessinez en blanc sur les zones où des watermarks sont encore visibles
+                    2. Cliquez sur "Valider édition manuelle" pour appliquer votre masque""")
+                    
+                    with gr.Row():
+                        with gr.Column(scale=2):
+                            image_editor = gr.ImageEditor(
+                                label="Éditeur d'image",
+                                brush=gr.Brush(colors=["#FFFFFF"], default_size=40)
+                            )
+                            
+                            gr.Markdown("""
+                            **Instructions pour créer un masque:**
+                            1. Dessinez en **BLANC** sur les zones du filigrane à supprimer
+                            2. Utilisez l'outil gomme pour corriger les erreurs
+                            3. Les zones blanches seront remplacées par l'inpainting
+                            """)
                             
                             with gr.Row():
-                                with gr.Column():
-                                    gr.Markdown("Inpainting automatique:")
-                                    inpainted_image_display = gr.Image(label="", type="pil")
-                                with gr.Column():
-                                    gr.Markdown("Résultat final détecté:")
-                                    final_image_display = gr.Image(label="", type="pil")
-                        
-                        with gr.TabItem("Édition manuelle"):
-                            gr.Markdown("### Éditeur de masque")
-                            gr.Markdown("""Pour effectuer une édition manuelle:
-                            1. L'image ci-dessous est le résultat du traitement automatique
-                            2. Dessinez en blanc sur les zones où des watermarks sont encore visibles
-                            3. Cliquez sur "Valider édition manuelle" pour appliquer votre masque""")
-                            
-                            with gr.Row():
-                                with gr.Column(scale=1):
-                                    gr.Markdown("#### Image déjà traitée par l'IA:")
-                                    inpainted_preview = gr.Image(label="", type="pil")  # Affichage de référence
-                            
-                                with gr.Column(scale=2):
-                                    gr.Markdown("#### Dessinez votre masque sur cette image:")
-                                    image_editor = gr.ImageEditor(
-                                        label="Éditeur d'image"
-                                    )
-                                    
-                                    gr.Markdown("""
-                                    **Instructions pour créer un masque:**
-                                    1. Dessinez en **BLANC** sur les zones du filigrane à supprimer
-                                    2. Utilisez l'outil gomme pour corriger les erreurs
-                                    3. Les zones blanches seront remplacées par l'inpainting
-                                    """)
-                                    
-                                    with gr.Row():
-                                        # Outil pour réinitialiser le masque
-                                        reset_editor_btn = gr.Button("Réinitialiser le masque")
-                                        # Bouton de validation de l'édition
-                                        validate_edit = gr.Button("Valider édition manuelle", variant="primary")
+                                # Outil pour réinitialiser le masque
+                                reset_editor_btn = gr.Button("Réinitialiser le masque")
+                                # Bouton de validation de l'édition
+                                validate_edit_btn = gr.Button("Valider édition manuelle", variant="primary")
                     
                     # Fonction pour réinitialiser l'éditeur
                     def reset_editor(current_idx, images):
@@ -1002,17 +983,14 @@ with gr.Blocks() as interfaces:
 
                     # Résultats après traitement
                     with gr.Row(visible=False) as results_row:
-                        processed_mask = gr.Image(
-                            label="Masque appliqué",
-                            type="numpy",
-                            visible=True
-                        )
-                        
                         final_image = gr.Image(
                             label="Image traitée",
                             type="pil",
                             visible=True
                         )
+                
+                    # Ajouter cette ligne juste ici
+                    results_visibility = gr.Checkbox(visible=False, label="Résultats visibles")
             
             # Variables d'état pour gérer le flux de traitement
             current_image_index = gr.State(value=0)
@@ -1034,12 +1012,6 @@ with gr.Blocks() as interfaces:
                     add_watermark_option,
                     watermark_text,
                     result_status,
-                    original_image_display,
-                    mask_display,
-                    inpainted_image_display,
-                    final_image_display,
-                    inpainted_preview,
-                    processed_mask,
                     final_image,
                     results_row,
                     manual_edit_interface,
@@ -1058,12 +1030,11 @@ with gr.Blocks() as interfaces:
                     watermark_text
                 ],
                 outputs=[
-                    current_image_index,
-                    remaining_images,
-                    result_status,
-                    processed_mask,
-                    final_image,
-                    results_row
+                    current_image_index,   # Composant State
+                    remaining_images,      # Composant State
+                    result_status,         # Composant Textbox
+                    final_image,           # Composant Image
+                    results_visibility     # Composant Checkbox au lieu de Row
                 ]
             )
             
@@ -1074,23 +1045,22 @@ with gr.Blocks() as interfaces:
                     current_image_index,
                     remaining_images,
                     image_index,
-                    image_editor,  # On passe l'éditeur d'image à la fois pour edited_image et edited_mask
-                    image_editor,  # On passe l'éditeur d'image comme masque édité
+                    image_editor,
+                    image_editor,
                     remove_bg_option,
                     add_watermark_option,
                     watermark_text
                 ],
                 outputs=[
-                    current_image_index,
-                    remaining_images,
-                    result_status,
-                    processed_mask,
-                    final_image,
-                    results_row
+                    current_image_index,   # Composant State
+                    remaining_images,      # Composant State
+                    result_status,         # Composant Textbox
+                    final_image,           # Composant Image
+                    results_visibility     # Composant Checkbox au lieu de Row
                 ]
             )
             
-            # Passer à l'image suivante
+            # Passer à l'édition manuelle
             skip_image.click(
                 next_image,
                 inputs=[current_image_index, remaining_images],
@@ -1098,14 +1068,11 @@ with gr.Blocks() as interfaces:
                     current_image_index,
                     remaining_images,
                     result_status,
-                    original_image_display,
-                    mask_display,
-                    inpainted_image_display,
-                    final_image_display,
-                    inpainted_preview,  # Ajouter inpainted_preview
+                    image_editor,
                     remove_bg_option,
-                    manual_edit_interface,  # Utiliser le composant Gradio directement
-                    results_row  # Utiliser le composant Gradio directement
+                    manual_edit_interface,
+                    results_row,
+                    image_editor
                 ]
             )
         with gr.Tab("Inpainting avec masque"):
@@ -1124,29 +1091,6 @@ with gr.Blocks() as interfaces:
                 outputs=[output_image]
             )
         
-        # Conserver l'ancienne interface pour la détection automatique
-        with gr.Tab("Inpainting automatique"):
-            with gr.Row():
-                with gr.Column():
-                    auto_input_image = gr.Image(label="Image d'entrée", type="numpy")
-                    threshold_remove = gr.Slider(minimum=0.0, maximum=1.0, value=0.85, step=0.05,
-                                          label="Seuil de confiance")
-                    max_bbox_percent = gr.Slider(minimum=1, maximum=100, value=10,step=1,
-                                          label="Maximal bbox percent")
-                    remove_watermark_iterations = gr.Slider(minimum=1, maximum=10, value=1, step=1,
-                                          label="Nombre d'itérations d'inpainting")
-                    auto_inpaint_btn = gr.Button("Appliquer l'inpainting automatique")
-                
-                with gr.Column():
-                    output_mask = gr.Image(label="Masque de détection", type="numpy")
-                    auto_output_image = gr.Image(label="Image traitée", type="numpy")
-            
-            auto_inpaint_btn.click(
-                inpaint_image,
-                inputs=[auto_input_image, threshold_remove, max_bbox_percent, remove_watermark_iterations],
-                outputs=[output_mask, auto_output_image]
-            )
-
         with gr.Tab("Détection From URL"):
             with gr.Row():
                 with gr.Column():

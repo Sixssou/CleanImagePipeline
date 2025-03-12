@@ -599,9 +599,9 @@ class WatermakRemovalClient:
         raise ValueError(error_msg)
     
     def detect_and_inpaint(self, 
-                          input_image: np.ndarray, 
-                          threshold: float = 0.85, 
-                          max_bbox_percent: float = 10.0, 
+                input_image: np.ndarray, 
+                threshold: float = 0.85, 
+                max_bbox_percent: float = 10.0, 
                           remove_watermark_iterations: int = 1) -> Tuple[np.ndarray, np.ndarray]:
         """
         Détecte les watermarks dans une image et applique l'inpainting pour les supprimer.
@@ -617,28 +617,28 @@ class WatermakRemovalClient:
         """
         try:
             # Appel à l'API d'inpainting standard avec détection automatique
-            result = self.client.predict(
-                input_image,
-                threshold,
-                max_bbox_percent,
-                remove_watermark_iterations,
-                api_name=os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_INPAINT_IMAGE")
-            )
-            
-            # Vérifier le format du résultat
-            if isinstance(result, tuple) and len(result) == 2:
-                # Si le résultat est déjà un tuple (masque, image_traitée)
-                return result
-            elif isinstance(result, np.ndarray):
-                # Si le résultat est seulement l'image traitée, on retourne un masque vide
-                logger.warning("L'API n'a pas retourné de masque de détection")
-                mask = np.zeros_like(input_image)
-                if len(mask.shape) == 3 and mask.shape[2] == 3:
-                    mask = np.zeros((mask.shape[0], mask.shape[1]), dtype=np.uint8)
-                return mask, result
-            else:
-                # Format inattendu
-                raise ValueError(f"Format de résultat inattendu: {type(result)}")
+                result = self.client.predict(
+                    input_image,
+                    threshold,
+                    max_bbox_percent,
+                    remove_watermark_iterations,
+                    api_name=os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_INPAINT_IMAGE")
+                )
+                
+                # Vérifier le format du résultat
+                if isinstance(result, tuple) and len(result) == 2:
+                    # Si le résultat est déjà un tuple (masque, image_traitée)
+                    return result
+                elif isinstance(result, np.ndarray):
+                    # Si le résultat est seulement l'image traitée, on retourne un masque vide
+                    logger.warning("L'API n'a pas retourné de masque de détection")
+                    mask = np.zeros_like(input_image)
+                    if len(mask.shape) == 3 and mask.shape[2] == 3:
+                        mask = np.zeros((mask.shape[0], mask.shape[1]), dtype=np.uint8)
+                    return mask, result
+                else:
+                    # Format inattendu
+                    raise ValueError(f"Format de résultat inattendu: {type(result)}")
                 
         except Exception as e:
             logger.error(f"Erreur lors de la détection et de l'inpainting: {str(e)}")
