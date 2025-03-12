@@ -329,25 +329,28 @@ def visualize_mask(mask_img):
 
 def process_edited_image(current_idx, images, index, edited_image, edited_mask=None, remove_bg_option=False, add_watermark_option=True, watermark_text="www.inflatable-store.com"):
     """
-    Traite une image après édition manuelle ou validation du traitement automatique.
+    Traite l'image éditée par l'utilisateur.
     
     Args:
-        current_idx: Index actuel dans la liste d'images
+        current_idx: Index actuel dans la liste des images
         images: Liste des images à traiter
-        index: Index de l'image dans Google Sheets
-        edited_image: Image éditée ou originale (ignorée si edited_mask est fourni)
-        edited_mask: Masque édité manuellement (None si on utilise le résultat automatique)
-        remove_bg_option: Supprimer l'arrière-plan de l'image traitée
-        add_watermark_option: Ajouter un filigrane à l'image traitée
+        index: Index de sélection dans l'interface (pas utilisé directement)
+        edited_image: Image éditée manuellement
+        edited_mask: Masque édité manuellement (dessin sur l'image)
+        remove_bg_option: Option pour supprimer l'arrière-plan
+        add_watermark_option: Option pour ajouter un filigrane
         watermark_text: Texte du filigrane
         
     Returns:
-        tuple: (nouvel index, liste d'images mise à jour, résultat du traitement)
+        tuple: (current_idx, images, message, vis_mask, result_image, edit_panel_update)
     """
-    global pipeline
-    global sheet_name  # Déclaration sur sa propre ligne
     if pipeline is None:
         initialize_clients()
+        
+    if 'gsheet_name' not in globals() or gsheet_name is None:
+        sheet_name = "Auto-processed"
+    else:
+        sheet_name = gsheet_name
     
     try:
         if current_idx >= len(images) or current_idx < 0:
@@ -395,39 +398,33 @@ def process_edited_image(current_idx, images, index, edited_image, edited_mask=N
                         
                         logger.info(f"Masque extrait du premier calque: {white_pixels} pixels blancs ({white_percentage:.2f}%)")
                         
+                        # Si le masque contient assez de pixels blancs, l'utiliser
                         if white_pixels > 0:
-                            actual_mask = mask_image
                             # Enregistrer le masque pour débogage
-                            mask_debug_path = os.path.join(TEMP_DIR, f"debug_edit_mask_{idx}.png")
+                            mask_debug_path = os.path.join(TEMP_DIR, "debug_edit_mask_1.png")
                             mask_image.save(mask_debug_path)
                             logger.info(f"Masque enregistré pour débogage: {mask_debug_path}")
+                            actual_mask = mask_image
                         else:
-                            logger.warning("Le masque ne contient aucun pixel blanc - aucune zone à traiter")
+                            logger.warning("Le masque ne contient pas de pixels blancs, ignoré")
                     except Exception as e:
-                        logger.error(f"Erreur lors de l'extraction du masque du premier calque: {e}")
-                
-                # Si l'extraction du premier calque a échoué, essayer avec le composite
-                if actual_mask is None and "composite" in edited_mask:
-                    logger.info("Utilisation du masque composite de l'ImageEditor")
-                    actual_mask = edited_mask["composite"]
+                        logger.error(f"Erreur lors de l'extraction du masque: {str(e)}")
+                else:
+                    logger.warning("Aucun calque trouvé dans le masque")
             else:
-                logger.info("Utilisation du masque édité directement")
-                actual_mask = edited_mask
-            
-            # Vérification que le masque est bien défini
-            if actual_mask is None:
-                logger.warning("Le masque édité n'a pas pu être extrait, utilisation du résultat automatique")
+                logger.warning(f"Format de masque non pris en charge: {type(edited_mask)}")
         
         # Si un masque édité a été fourni, utiliser apply_manual_edits sans fournir inpainted_result
         # pour forcer l'appel à l'API d'inpainting
         if actual_mask is not None:
             logger.info("Utilisation du masque édité pour appeler l'API d'inpainting")
-            # Ignorons edited_image, nous n'utilisons que le masque édité
+            # MODIFICATION ICI: Nous passons l'image inpaintée comme paramètre inpainted_result
+            # pour que la méthode process_edited_image utilise cette image comme base au lieu de l'image originale
             result = pipeline.process_edited_image(
                 index=idx,
                 image_url=image_url,
                 edited_mask=actual_mask,
-                inpainted_result=None,  # Important: on ne passe pas l'image inpaintée pour forcer l'appel à l'API
+                inpainted_result=inpainted_image,  # Passer l'image inpaintée préalablement
                 remove_background=remove_bg_option,
                 add_watermark=add_watermark_option,
                 watermark_text=watermark_text,
@@ -455,9 +452,10 @@ def process_edited_image(current_idx, images, index, edited_image, edited_mask=N
         return current_idx, images, "Traitement terminé", vis_mask, result, gr.update(visible=True)
     
     except Exception as e:
-        logger.error(f"Erreur lors du traitement de l'image éditée: {e}")
-        logger.exception("Exception détaillée:")
-        return current_idx, images, f"Erreur: {str(e)}", None, None, gr.update(visible=False)
+        logger.error(f"Erreur lors du traitement de l'image éditée: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return current_idx, images, f"Erreur: {str(e)}", gr.update(visible=False), gr.update(visible=False), gr.update(visible=True)
 
 def validate_automatic_processing(current_idx, images, remove_bg_option=False, add_watermark_option=True, watermark_text="www.inflatable-store.com"):
     """

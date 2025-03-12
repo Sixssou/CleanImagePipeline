@@ -230,31 +230,33 @@ class CleanImagePipeline:
                            watermark_text: str = None,
                            sheet_name: str = None):
         """
-        Traite une image éditée manuellement ou avec le masque original et la met à jour dans Google Sheets.
+        Traite une image après édition manuelle ou inpainting automatique.
         
         Args:
-            index: Index de l'image dans Google Sheets
-            image_url: URL de l'image source
-            edited_mask: Masque édité manuellement (None si on utilise le résultat de l'inpainting automatique)
-            inpainted_result: Résultat de l'inpainting automatique (None si le masque a été édité manuellement)
-            remove_background: Supprimer l'arrière-plan de l'image traitée
-            add_watermark: Ajouter un filigrane à l'image traitée
-            watermark_text: Texte du filigrane
-            sheet_name: Nom de la feuille dans Google Sheets
+            index (int): Index de l'image dans la liste
+            image_url (str): URL de l'image originale
+            edited_mask (Image.Image, optional): Masque édité manuellement
+            inpainted_result (np.ndarray, optional): Résultat de l'inpainting automatique
+            remove_background (bool, optional): Si True, supprime l'arrière-plan. Par défaut False.
+            add_watermark (bool, optional): Si True, ajoute un watermark. Par défaut False.
+            watermark_text (str, optional): Texte du watermark à ajouter
+            sheet_name (str, optional): Nom de la feuille de calcul pour l'enregistrement
             
         Returns:
-            str: URL de l'image traitée
+            str: Chemin vers l'image traitée ou None en cas d'échec
         """
-        logger.info(f"=== DÉBUT process_edited_image ===")
+        logger.info("=== DÉBUT process_edited_image ===")
         logger.info(f"edited_mask est None: {edited_mask is None}")
         logger.info(f"inpainted_result est None: {inpainted_result is None}")
-        logger.info(f"Type de edited_mask: {type(edited_mask) if edited_mask is not None else 'None'}")
-        logger.info(f"Type de inpainted_result: {type(inpainted_result) if inpainted_result is not None else 'None'}")
+        logger.info(f"Type de edited_mask: {type(edited_mask)}")
+        logger.info(f"Type de inpainted_result: {type(inpainted_result)}")
         
-        if not self.shopify_client:
-            raise ValueError("Le client Shopify n'est pas défini")
-        if not self.gsheet_client and sheet_name:
-            raise ValueError("Le client Google Sheets n'est pas défini")
+        if self.shopify_client is None:
+            logger.warning("Shopify client n'est pas initialisé, les résultats ne seront pas ajoutés au site.")
+        
+        # Créer un répertoire temporaire si nécessaire
+        if not os.path.exists(TEMP_DIR):
+            os.makedirs(TEMP_DIR, exist_ok=True)
         
         try:
             result_path = None
@@ -311,14 +313,51 @@ class CleanImagePipeline:
                         image_source = inpainted_result
                     elif isinstance(inpainted_result, str):
                         # Si c'est un chemin ou une URL
-                        image_source = download_image(inpainted_result)
+                        if os.path.exists(inpainted_result):
+                            # C'est un chemin de fichier local
+                            logger.info(f"Chargement de l'image depuis le chemin local: {inpainted_result}")
+                            try:
+                                image_source = Image.open(inpainted_result)
+                            except Exception as e:
+                                logger.error(f"Erreur lors du chargement de l'image locale: {str(e)}")
+                                # Fallback sur l'image originale
+                                logger.info("Utilisation de l'image originale comme solution de repli")
+                                image_source = download_image(image_url)
+                        else:
+                            # C'est une URL
+                            try:
+                                image_source = download_image(inpainted_result)
+                            except Exception as e:
+                                logger.error(f"Erreur lors du téléchargement de l'image: {str(e)}")
+                                # Fallback sur l'image originale
+                                logger.info("Utilisation de l'image originale comme solution de repli")
+                                image_source = download_image(image_url)
                     else:
                         logger.warning(f"Format non reconnu pour inpainted_result: {type(inpainted_result)}, utilisation de l'image originale")
                         image_source = download_image(image_url)
                 else:
-                    # Utiliser l'image originale comme base
-                    logger.info("Utilisation de l'image originale comme base pour l'édition manuelle")
-                    image_source = download_image(image_url)
+                    # MODIFICATION ICI: au lieu d'utiliser l'image originale,
+                    # On va d'abord essayer de récupérer l'image inpaintée préalablement
+                    logger.info("Tentative de récupération de l'image préalablement traitée (inpainted_preview)")
+                    try:
+                        # Vérifier si on a déjà traité cette image et qu'elle est disponible dans le cache
+                        if hasattr(self, 'image_cache') and image_url in self.image_cache and 'inpainted' in self.image_cache[image_url]:
+                            logger.info("Utilisation de l'image inpaintée depuis le cache")
+                            image_source = self.image_cache[image_url]['inpainted']
+                        else:
+                            # Essayer de détecter les watermarks et appliquer l'inpainting automatique
+                            logger.info("Application de l'inpainting automatique avant édition manuelle")
+                            success, detected_mask, inpainted_auto = self.detect_and_remove_watermark(image_url)
+                            if success and inpainted_auto is not None:
+                                logger.info("Inpainting automatique réussi, utilisation comme base")
+                                image_source = inpainted_auto
+                            else:
+                                logger.warning("Inpainting automatique échoué, utilisation de l'image originale")
+                                image_source = download_image(image_url)
+                    except Exception as e:
+                        logger.error(f"Erreur lors de la récupération de l'image prétraitée: {str(e)}")
+                        logger.info("Utilisation de l'image originale comme solution de repli")
+                        image_source = download_image(image_url)
                 
                 logger.info(f"Image source téléchargée, type: {type(image_source)}")
                 
@@ -341,68 +380,88 @@ class CleanImagePipeline:
             # Supprimer l'arrière-plan si demandé
             if remove_background and result_path:
                 try:
-                    # Ouvrir l'image depuis le chemin local au lieu de passer le chemin comme URL
-                    local_image = Image.open(result_path)
-                    # Convertir en numpy array si nécessaire
-                    local_image_np = np.array(local_image)
-                    # Appeler remove_bg avec l'image, pas le chemin
-                    bg_removed_image = self.image_processor.watermak_removal_client.remove_bg(local_image_np)
-                    if bg_removed_image is not None:
-                        bg_removed_path = os.path.join(TEMP_DIR, f"bg_removed_{uuid.uuid4()}.png")
-                        # Vérifier si bg_removed_image est une chaîne (chemin de fichier) ou une image
-                        result_path_updated = False
+                    logger.info(f"Suppression de l'arrière-plan demandée pour {result_path}")
+                    
+                    # Charger l'image résultante
+                    result_image = Image.open(result_path)
+                    
+                    # Supprimer l'arrière-plan
+                    success, no_bg_image = self.image_processor.remove_background(result_image)
+                    
+                    if success and no_bg_image is not None:
+                        # Sauvegarder la nouvelle image sans arrière-plan
+                        no_bg_path = os.path.join(TEMP_DIR, f"nobg_{os.path.basename(result_path)}")
                         
-                        if isinstance(bg_removed_image, np.ndarray):
-                            Image.fromarray(bg_removed_image).save(bg_removed_path)
-                            result_path = bg_removed_path
-                            result_path_updated = True
-                        elif isinstance(bg_removed_image, Image.Image):
-                            bg_removed_image.save(bg_removed_path)
-                            result_path = bg_removed_path
-                            result_path_updated = True
-                        elif isinstance(bg_removed_image, str) and os.path.exists(bg_removed_image):
-                            shutil.copy(bg_removed_image, bg_removed_path)
-                            result_path = bg_removed_path
-                            result_path_updated = True
+                        if isinstance(no_bg_image, np.ndarray):
+                            Image.fromarray(no_bg_image).save(no_bg_path)
                         else:
-                            # Si le format n'est pas reconnu, passer cette étape
-                            logger.warning(f"Format non reconnu pour bg_removed_image: {type(bg_removed_image)}")
+                            no_bg_image.save(no_bg_path)
                         
-                        if result_path_updated:
-                            logger.info(f"Arrière-plan supprimé: {result_path}")
+                        logger.info(f"Image sans arrière-plan sauvegardée: {no_bg_path}")
+                        result_path = no_bg_path
+                    else:
+                        logger.warning("La suppression de l'arrière-plan a échoué")
                 except Exception as e:
                     logger.error(f"Erreur lors de la suppression de l'arrière-plan: {str(e)}")
-                    logger.exception(e)
             
-            # Ajouter un filigrane si demandé
-            if add_watermark and watermark_text and result_path:
-                result_img = Image.open(result_path)
-                watermarked_img = add_watermark_to_image(result_img, watermark_text)
-                wm_result_path = os.path.join(TEMP_DIR, f"wm_{uuid.uuid4()}.png")
-                watermarked_img.save(wm_result_path)
-                result_path = wm_result_path
-                logger.info(f"Filigrane ajouté: {result_path}")
-            
-            # Télécharger l'image sur Shopify
-            if result_path:
-                image_url_processed = self.shopify_client.upload_file_to_shopify(result_path)
-                logger.info(f"Image traitée et uploadée: {image_url_processed}")
-                
-                # Mettre à jour la feuille Google Sheets si nécessaire
-                if self.gsheet_client and sheet_name and index:
-                    self.gsheet_client.write_cells(sheet_name, f"B{index}", [[image_url_processed]])
-                    logger.info(f"Google Sheets mis à jour pour l'index {index}")
-                
-                # Supprimer le fichier temporaire
+            # Ajouter un watermark si demandé
+            if add_watermark and result_path and watermark_text:
                 try:
-                    os.remove(result_path)
-                except:
-                    pass
-                return image_url_processed
-            else:
-                return None
+                    logger.info(f"Ajout d'un watermark demandé pour {result_path} avec le texte: {watermark_text}")
+                    
+                    # Charger l'image résultante
+                    result_image = Image.open(result_path)
+                    
+                    # Ajouter le watermark
+                    watermarked_image = self.image_processor.add_watermark(result_image, watermark_text)
+                    
+                    if watermarked_image is not None:
+                        # Sauvegarder la nouvelle image avec watermark
+                        watermarked_path = os.path.join(TEMP_DIR, f"wm_{os.path.basename(result_path)}")
+                        watermarked_image.save(watermarked_path)
+                        
+                        logger.info(f"Image avec watermark sauvegardée: {watermarked_path}")
+                        result_path = watermarked_path
+                    else:
+                        logger.warning("L'ajout du watermark a échoué")
+                except Exception as e:
+                    logger.error(f"Erreur lors de l'ajout du watermark: {str(e)}")
+            
+            # Enregistrer dans Google Sheet si demandé
+            if sheet_name and self.gsheet_client:
+                try:
+                    logger.info(f"Enregistrement dans Google Sheet demandé pour {result_path} dans la feuille: {sheet_name}")
+                    
+                    # Construire le lien Shopify si disponible
+                    shopify_url = ""
+                    if self.shopify_client:
+                        try:
+                            # Construire un nom de fichier unique basé sur l'URL de l'image
+                            base_name = os.path.basename(image_url)
+                            name_parts = os.path.splitext(base_name)
+                            unique_name = f"{name_parts[0]}_processed_{uuid.uuid4().hex[:8]}{name_parts[1]}"
+                            
+                            # Uploader l'image sur Shopify
+                            shopify_url = self.shopify_client.upload_file(result_path, unique_name)
+                            logger.info(f"Image uploadée sur Shopify: {shopify_url}")
+                        except Exception as e:
+                            logger.error(f"Erreur lors de l'upload sur Shopify: {str(e)}")
+                    
+                    # Ajouter l'entrée dans Google Sheet
+                    self.gsheet_client.add_entry(
+                        sheet_name=sheet_name,
+                        original_url=image_url,
+                        processed_url=shopify_url,
+                        local_path=result_path
+                    )
+                    logger.info(f"Entrée ajoutée dans Google Sheet: {sheet_name}")
+                except Exception as e:
+                    logger.error(f"Erreur lors de l'enregistrement dans Google Sheet: {str(e)}")
+            
+            logger.info(f"=== FIN process_edited_image (result_path={result_path}) ===")
+            return result_path
             
         except Exception as e:
-            logger.error(f"Erreur lors du traitement de l'image éditée {image_url}: {str(e)}")
+            logger.error(f"Erreur lors du traitement de l'image éditée: {str(e)}")
             logger.exception(e)
             return None 

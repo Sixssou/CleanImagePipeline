@@ -11,30 +11,59 @@ from loguru import logger
 TEMP_DIR = os.path.join(tempfile.gettempdir(), "cleanimage")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-def download_image(url):
-    """Télécharge une image depuis une URL et la convertit en numpy array."""
-    response = requests.get(url)
-    img = Image.open(BytesIO(response.content))
-    return np.array(img)
+def download_image(image_url_or_path):
+    """
+    Télécharge une image depuis une URL ou charge une image depuis un chemin local.
+    
+    Args:
+        image_url_or_path (str): URL ou chemin local de l'image
+        
+    Returns:
+        PIL.Image: Image chargée ou téléchargée
+    """
+    try:
+        # Vérifier d'abord si c'est un chemin de fichier local
+        if os.path.exists(image_url_or_path):
+            logger.info(f"Chargement de l'image depuis le chemin local: {image_url_or_path}")
+            return Image.open(image_url_or_path)
+        
+        # Si ce n'est pas un fichier local, essayer de télécharger depuis l'URL
+        logger.info(f"Téléchargement de l'image depuis l'URL: {image_url_or_path}")
+        response = requests.get(image_url_or_path, stream=True)
+        
+        if response.status_code == 200:
+            # Charger l'image depuis la réponse HTTP
+            img = Image.open(BytesIO(response.content))
+            return img
+        else:
+            # Si la requête a échoué, lever une exception
+            response.raise_for_status()
+    except Exception as e:
+        # Capturer et relever l'exception avec plus d'informations
+        raise ValueError(f"Erreur lors du chargement de l'image {image_url_or_path}: {str(e)}")
+        
+    # En cas d'erreur non capturée
+    raise ValueError(f"Échec du chargement de l'image {image_url_or_path} pour une raison inconnue")
 
 def convert_to_pil_image(image):
     """
-    Convertit différents formats d'image en PIL.Image.
+    Convertit différents types d'images en PIL Image.
     
     Args:
-        image: Image au format PIL.Image, numpy.ndarray, chemin de fichier (str) ou dictionnaire Gradio
+        image: Image sous différents formats (PIL.Image, np.ndarray, str, dict, etc.)
         
     Returns:
-        PIL.Image.Image: Image convertie au format PIL
+        PIL.Image: Image convertie
     """
+    # Si l'image est None
     if image is None:
         return None
         
-    # Si c'est déjà une image PIL, la retourner directement
+    # Si c'est déjà une PIL Image
     if isinstance(image, Image.Image):
         return image
-        
-    # Si c'est un tableau numpy
+    
+    # Si c'est un tableau NumPy
     elif isinstance(image, np.ndarray):
         # Vérifier s'il s'agit d'un masque binaire ou d'une image en niveaux de gris
         if len(image.shape) == 2:
@@ -42,23 +71,57 @@ def convert_to_pil_image(image):
         # Images RGB/RGBA
         else:
             return Image.fromarray(image.astype(np.uint8))
-            
-    # Si c'est un chemin de fichier
-    elif isinstance(image, str) and os.path.exists(image):
-        return Image.open(image)
+    
+    # Si c'est un chemin de fichier ou une URL
+    elif isinstance(image, str):
+        return download_image(image)
+    
+    # Si c'est un dictionnaire (pour les éditeurs d'image Gradio)
+    elif isinstance(image, dict):
+        # Essayer d'extraire l'image du dictionnaire
+        if 'composite' in image and image['composite'] is not None:
+            if isinstance(image['composite'], np.ndarray):
+                return convert_to_pil_image(image['composite'])  # Utiliser la récursion pour gérer les types numpy
+            elif isinstance(image['composite'], Image.Image):
+                return image['composite']
         
-    # Si c'est un dictionnaire (format possible depuis Gradio)
-    elif isinstance(image, dict) and "path" in image:
-        return Image.open(image["path"])
+        # Essayer avec 'background'
+        elif 'background' in image and image['background'] is not None:
+            if isinstance(image['background'], np.ndarray):
+                return convert_to_pil_image(image['background'])  # Utiliser la récursion pour gérer les types numpy
+            elif isinstance(image['background'], Image.Image):
+                return image['background']
         
+        # Essayer avec 'layers'
+        elif 'layers' in image and image['layers'] and len(image['layers']) > 0:
+            # Prendre le premier calque (généralement le calque de dessin pour les masques)
+            layer = image['layers'][0]
+            if isinstance(layer, np.ndarray):
+                return convert_to_pil_image(layer)  # Utiliser la récursion pour gérer les types numpy
+            elif isinstance(layer, Image.Image):
+                return layer
+            # Si le calque est lui-même un dictionnaire
+            elif isinstance(layer, dict) and 'content' in layer:
+                content = layer['content']
+                if isinstance(content, np.ndarray):
+                    return convert_to_pil_image(content)  # Utiliser la récursion pour gérer les types numpy
+                elif isinstance(content, Image.Image):
+                    return content
+                    
+        # Si c'est un dictionnaire avec un chemin (format possible depuis Gradio)
+        elif "path" in image:
+            return Image.open(image["path"])
+    
     # Si c'est une liste (parfois le cas avec certains modèles)
     elif isinstance(image, list) and len(image) > 0:
         # Tenter de convertir le premier élément
         return convert_to_pil_image(image[0])
-        
-    else:
-        # En cas d'échec, lever une exception
-        raise ValueError(f"Impossible de convertir l'image de type {type(image)} en PIL.Image")
+    
+    # Tenter une conversion générique pour les cas non gérés
+    try:
+        return Image.fromarray(np.array(image))
+    except Exception as e:
+        raise ValueError(f"Impossible de convertir l'image de type {type(image)} en PIL Image: {str(e)}")
 
 def create_empty_mask(image_size):
     """
