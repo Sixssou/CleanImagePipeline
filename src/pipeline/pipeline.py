@@ -192,7 +192,7 @@ class CleanImagePipeline:
             data = data[1:]
             
             results = []
-            for idx, row in enumerate(data, start=1):
+            for idx, row in enumerate(data, start=2):
                 lien_image_source = row[0]
                 lien_image_traitee = row[1] if len(row) > 1 else ""
                 supprimer_background = row[2].upper() == 'TRUE' if len(row) > 2 else False

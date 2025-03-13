@@ -342,7 +342,7 @@ def process_edited_image(current_idx, images, index, edited_image, edited_mask=N
         watermark_text: Texte du filigrane
         
     Returns:
-        tuple: (current_idx, images, message, vis_mask, result_image, edit_panel_update)
+        tuple: (current_idx, images, message, vis_mask, result_image)
     """
     if pipeline is None:
         initialize_clients()
@@ -364,10 +364,16 @@ def process_edited_image(current_idx, images, index, edited_image, edited_mask=N
     
     try:
         if current_idx >= len(images) or current_idx < 0:
-            return current_idx, images, None, gr.update(visible=False), gr.update(visible=False)
+            return current_idx, images, None, gr.update(visible=False), None
         
         # Extraire les informations de l'image
-        idx, image_url, original_image, mask, inpainted_image, final_image, _ = images[current_idx]
+        # On extrait tous les éléments de l'image, et on ajoute la valeur 'needs_upload' à False si elle n'existe pas
+        if len(images[current_idx]) == 7:
+            idx, image_url, original_image, mask, inpainted_image, final_image, bg_option = images[current_idx]
+            needs_upload = False  # Par défaut, on considère que l'image n'a pas besoin d'être uploadée
+        else:
+            idx, image_url, original_image, mask, inpainted_image, final_image, bg_option, needs_upload = images[current_idx]
+            
         logger.info(f"Traitement de l'image à l'index {idx} (GSheet) / {current_idx} (liste)")
         
         # Traitement du masque édité (extrait de l'ImageEditor)
@@ -431,49 +437,76 @@ def process_edited_image(current_idx, images, index, edited_image, edited_mask=N
             logger.info("Utilisation du masque édité pour appeler l'API d'inpainting")
             # MODIFICATION ICI: Nous passons l'image inpaintée comme paramètre inpainted_result
             # pour que la méthode process_edited_image utilise cette image comme base au lieu de l'image originale
-            logger.info(f"Appel de pipeline.process_edited_image avec sheet_name={sheet_name_to_use}")
-            result = pipeline.process_edited_image(
-                index=idx,
-                image_url=image_url,
+            logger.info(f"Appel de pipeline.image_processor.apply_manual_edits")
+            
+            # Appliquer l'édition manuelle pour obtenir l'image traitée sans l'envoyer sur Shopify
+            input_path, mask_path, result_path = pipeline.image_processor.apply_manual_edits(
+                image=inpainted_image,
                 edited_mask=actual_mask,
-                inpainted_result=inpainted_image,  # Passer l'image inpaintée préalablement
-                remove_background=remove_bg_option,
+                supprimer_background=remove_bg_option,
                 add_watermark=add_watermark_option,
-                watermark_text=watermark_text,
-                sheet_name=sheet_name_to_use
+                watermark_text=watermark_text
             )
+            
+            if not result_path:
+                logger.error(f"L'inpainting manuel a échoué: {image_url}")
+                return current_idx, images, "Erreur lors de l'inpainting", gr.update(visible=False), None
+            
+            # Charger l'image résultante
+            result_image = Image.open(result_path)
+        
         # Sinon, utiliser le résultat de l'inpainting automatique
         else:
             logger.info("Utilisation du résultat d'inpainting automatique")
-            logger.info(f"Appel de pipeline.process_edited_image avec sheet_name={sheet_name_to_use}")
-            result = pipeline.process_edited_image(
-                index=idx,
-                image_url=image_url,
-                edited_mask=None,
-                inpainted_result=edited_image,
-                remove_background=remove_bg_option,
-                add_watermark=add_watermark_option,
-                watermark_text=watermark_text,
-                sheet_name=sheet_name_to_use
-            )
+            
+            # Si l'image est déjà un objet PIL Image, l'utiliser directement
+            if isinstance(edited_image, Image.Image):
+                result_image = edited_image
+            # Si c'est un tableau NumPy, le convertir en Image PIL
+            elif isinstance(edited_image, np.ndarray):
+                result_image = Image.fromarray(edited_image)
+            # Si c'est un chemin de fichier, charger l'image
+            elif isinstance(edited_image, str) and os.path.exists(edited_image):
+                result_image = Image.open(edited_image)
+            else:
+                logger.error(f"Type d'image non pris en charge: {type(edited_image)}")
+                return current_idx, images, f"Type d'image non pris en charge: {type(edited_image)}", gr.update(visible=False), None
+            
+            # Appliquer les options de traitement supplémentaires si nécessaire
+            if remove_bg_option:
+                logger.info("Application de la suppression d'arrière-plan")
+                success, no_bg_image = pipeline.image_processor.remove_background(result_image)
+                if success and no_bg_image is not None:
+                    result_image = no_bg_image
+            
+            if add_watermark_option and watermark_text:
+                logger.info(f"Ajout du filigrane: {watermark_text}")
+                watermarked_image = pipeline.image_processor.add_watermark(result_image, watermark_text)
+                if watermarked_image is not None:
+                    result_image = watermarked_image
+            
+            # Sauvegarder le résultat
+            unique_id = uuid.uuid4()
+            result_path = os.path.join(TEMP_DIR, f"result_{unique_id}.png")
+            result_image.save(result_path)
         
         # Mettre à jour l'image traitée dans notre liste
-        images[current_idx] = (idx, image_url, original_image, mask, inpainted_image, result, True)
+        # On ajoute "needs_upload=True" pour indiquer que cette image doit être uploadée
+        # sur Shopify lors du passage à l'image suivante
+        images[current_idx] = (idx, image_url, original_image, mask, inpainted_image, result_path, remove_bg_option, True)
         
         # Afficher le masque extrait et l'image résultante
         vis_mask = visualize_mask(actual_mask) if actual_mask is not None else visualize_mask(mask)
         
-        # Rendre results_row visible (effet secondaire)
-        results_row.update(visible=True)
-        
-        # Retourner True pour le statut de visibilité au lieu de results_row
-        return current_idx, images, "Traitement terminé", vis_mask, True
+        # Retourner l'image résultante pour l'affichage
+        logger.info(f"Retour de l'image résultante pour affichage: {result_path}")
+        return current_idx, images, "Traitement terminé. Vérifiez l'image et cliquez sur 'Image suivante' pour valider.", gr.update(visible=True), result_image
     
     except Exception as e:
         logger.error(f"Erreur lors du traitement de l'image éditée: {str(e)}")
         import traceback
         traceback.print_exc()
-        return current_idx, images, f"Erreur: {str(e)}", gr.update(visible=False), False
+        return current_idx, images, f"Erreur: {str(e)}", gr.update(visible=False), None
 
 def validate_automatic_processing(current_idx, images, remove_bg_option=False, add_watermark_option=True, watermark_text="www.inflatable-store.com"):
     """
@@ -500,43 +533,64 @@ def validate_automatic_processing(current_idx, images, remove_bg_option=False, a
     
     try:
         if current_idx >= len(images) or current_idx < 0:
-            return current_idx, images, None, gr.update(visible=False), gr.update(visible=False)
+            return current_idx, images, None, gr.update(visible=False), None
         
         # Extraire les informations de l'image
-        idx, image_url, original_image, mask, inpainted_image, final_image, bg_option = images[current_idx]
-        
-        # Utiliser le résultat de l'inpainting automatique
-        result = pipeline.process_edited_image(
-            index=idx,
-            image_url=image_url,
-            edited_mask=None,
-            inpainted_result=inpainted_image,
-            remove_background=remove_bg_option,
-            add_watermark=add_watermark_option,
-            watermark_text=watermark_text,
-            sheet_name=sheet_name
-        )
-        
-        if result:
-            # Mise à jour de l'image traitée dans la liste
-            images[current_idx] = (idx, image_url, original_image, mask, inpainted_image, final_image, remove_bg_option)
-            
-            # Rendre results_row visible (effet secondaire)
-            results_row.update(visible=True)
-            
-            # Retourner True pour le statut de visibilité
-            return current_idx, images, result, gr.update(visible=True), True
+        if len(images[current_idx]) == 7:
+            idx, image_url, original_image, mask, inpainted_image, final_image, bg_option = images[current_idx]
         else:
-            return current_idx, images, "Le traitement a échoué", gr.update(visible=False), False
+            idx, image_url, original_image, mask, inpainted_image, final_image, bg_option, _ = images[current_idx]
+        
+        # Appliquer les options supplémentaires si nécessaires (background removal, watermark)
+        result_image = inpainted_image
+        
+        # Convertir en PIL.Image si nécessaire
+        if isinstance(result_image, np.ndarray):
+            result_image = Image.fromarray(result_image)
+        elif isinstance(result_image, str) and os.path.exists(result_image):
+            result_image = Image.open(result_image)
+        
+        # Supprimer l'arrière-plan si demandé
+        if remove_bg_option:
+            logger.info("Application de la suppression d'arrière-plan")
+            success, no_bg_image = pipeline.image_processor.remove_background(result_image)
+            if success and no_bg_image is not None:
+                result_image = no_bg_image
+        
+        # Ajouter le filigrane si demandé
+        if add_watermark_option and watermark_text:
+            logger.info(f"Ajout du filigrane: {watermark_text}")
+            watermarked_image = pipeline.image_processor.add_watermark(result_image, watermark_text)
+            if watermarked_image is not None:
+                result_image = watermarked_image
+        
+        # Sauvegarder le résultat
+        unique_id = uuid.uuid4()
+        result_path = os.path.join(TEMP_DIR, f"result_{unique_id}.png")
+        result_image.save(result_path)
+        
+        if result_path:
+            # Mise à jour de l'image traitée dans la liste
+            # On ajoute "needs_upload=True" pour indiquer que cette image doit être uploadée
+            # sur Shopify lors du passage à l'image suivante
+            images[current_idx] = (idx, image_url, original_image, mask, inpainted_image, result_path, remove_bg_option, True)
+            
+            # Retourner l'image résultante pour l'affichage
+            logger.info(f"Retour de l'image résultante pour affichage: {result_path}")
+            return current_idx, images, "Traitement terminé. Vérifiez l'image et cliquez sur 'Image suivante' pour valider.", gr.update(visible=True), result_image
+        else:
+            return current_idx, images, "Le traitement a échoué", gr.update(visible=False), None
     
     except Exception as e:
         logger.error(f"Erreur lors de la validation du traitement automatique: {str(e)}")
         logger.exception(e)
-        return current_idx, images, f"Erreur: {str(e)}", gr.update(visible=False), False
+        return current_idx, images, f"Erreur: {str(e)}", gr.update(visible=False), None
 
 def next_image(current_idx, images):
     """
     Passe à l'image suivante dans la liste.
+    Si l'image actuelle a été traitée mais pas encore uploadée sur Shopify,
+    elle est d'abord uploadée sur Shopify et le lien est enregistré dans Google Sheets.
     
     Args:
         current_idx: Index actuel dans la liste d'images
@@ -546,10 +600,56 @@ def next_image(current_idx, images):
         tuple: Informations pour mettre à jour l'interface
     """
     global pipeline
+    global sheet_name
     if pipeline is None:
         initialize_clients()
     
     try:
+        # Vérifier si l'image actuelle doit être uploadée sur Shopify
+        if 0 <= current_idx < len(images):
+            # Extraire les informations de l'image actuelle
+            if len(images[current_idx]) == 8:  # Si le format contient needs_upload
+                idx, image_url, original_image, mask, inpainted_image, result_path, bg_option, needs_upload = images[current_idx]
+                
+                # Si l'image a été traitée mais pas encore uploadée sur Shopify
+                if needs_upload and result_path:
+                    logger.info(f"Upload de l'image traitée sur Shopify: {result_path}")
+                    
+                    try:
+                        # Construire un nom de fichier unique basé sur l'URL de l'image
+                        base_name = os.path.basename(image_url)
+                        name_parts = os.path.splitext(base_name)
+                        unique_name = f"{name_parts[0]}_processed_{uuid.uuid4().hex[:8]}{name_parts[1]}"
+                        
+                        # Uploader l'image sur Shopify
+                        shopify_url = pipeline.shopify_client.upload_file(result_path, unique_name)
+                        logger.info(f"Image uploadée sur Shopify: {shopify_url}")
+                        
+                        # Mettre à jour la cellule dans Google Sheet avec l'URL Shopify
+                        if shopify_url and sheet_name:
+                            logger.info(f"Mise à jour de Google Sheet: feuille={sheet_name}, cellule=B{idx}, valeur={shopify_url}")
+                            pipeline.gsheet_client.write_cells(sheet_name, f"B{idx}", [[shopify_url]])
+                            logger.info(f"URL mise à jour dans Google Sheet: {sheet_name}, cellule B{idx}")
+                        
+                        # Marquer l'image comme uploadée
+                        images[current_idx] = (idx, image_url, original_image, mask, inpainted_image, result_path, bg_option, False)
+                        logger.info("Image marquée comme uploadée")
+                        
+                    except Exception as e:
+                        logger.error(f"Erreur lors de l'upload sur Shopify ou de la mise à jour de Google Sheet: {str(e)}")
+                        logger.exception(e)
+                        return (
+                            current_idx,  # Rester sur l'image actuelle en cas d'erreur
+                            images,
+                            f"Erreur lors de l'upload: {str(e)}",
+                            None,
+                            False,
+                            gr.update(visible=False),
+                            gr.update(visible=False),
+                            None  # image_editor
+                        )
+        
+        # Passer à l'image suivante
         next_idx = current_idx + 1
         if next_idx >= len(images):
             return (
@@ -564,7 +664,10 @@ def next_image(current_idx, images):
             )
         
         # Extraire les informations de l'image suivante
-        idx, image_url, original_image, mask, inpainted_image, final_image, bg_option = images[next_idx]
+        if len(images[next_idx]) == 8:  # Si le format contient needs_upload
+            idx, image_url, original_image, mask, inpainted_image, final_image, bg_option, _ = images[next_idx]
+        else:
+            idx, image_url, original_image, mask, inpainted_image, final_image, bg_option = images[next_idx]
         
         # Si l'image n'a pas encore été traitée
         if inpainted_image is None:
@@ -592,8 +695,8 @@ def next_image(current_idx, images):
                 inpainted_pil = Image.fromarray(inpainted_image) if isinstance(inpainted_image, np.ndarray) else inpainted_image
                 final_pil = Image.fromarray(final_image) if isinstance(final_image, np.ndarray) else final_image
                 
-                # Mettre à jour l'image dans la liste
-                images[next_idx] = (idx, image_url, original_image, mask_pil, inpainted_pil, final_pil, bg_option)
+                # Mettre à jour l'image dans la liste (ajouter needs_upload=False car elle n'a pas encore été traitée)
+                images[next_idx] = (idx, image_url, original_image, mask_pil, inpainted_pil, final_pil, bg_option, False)
                 
                 return (
                     next_idx,
@@ -732,11 +835,11 @@ def start_manual_pipeline(image_count, sheet_name_param):
         # Créer la liste complète des images traitées
         processed_images = []
         # Ajouter l'image traitée à la première position
-        processed_images.append((idx, url, original_image, mask_pil, inpainted_pil, final_pil, bg_option))
+        processed_images.append((idx, url, original_image, mask_pil, inpainted_pil, final_pil, bg_option, False))
         # Ajouter les autres images à traiter
         for i in range(1, len(images_to_process)):
             image_idx, image_url, image_original, image_bg_option = images_to_process[i]
-            processed_images.append((image_idx, image_url, image_original, None, None, None, image_bg_option))
+            processed_images.append((image_idx, image_url, image_original, None, None, None, image_bg_option, False))
         
         return (
             f"Traitement de l'image {1}/{len(images_to_process)}",
@@ -774,10 +877,7 @@ def start_manual_pipeline(image_count, sheet_name_param):
             gr.update(visible=False),  # results_row
             gr.update(visible=False),  # manual_edit_interface
             0                 # current_image_index
-    )
-
-def after_process(is_success):
-    return gr.update(visible=is_success)
+        )
 
 # Interface Gradio
 with gr.Blocks() as interfaces:
@@ -971,7 +1071,11 @@ with gr.Blocks() as interfaces:
                         if current_idx < 0 or current_idx >= len(images):
                             return None
                         
-                        _, _, _, _, inpainted_image, _, _ = images[current_idx]
+                        # Adapter pour gérer le cas où le tableau contient 8 éléments
+                        if len(images[current_idx]) == 8:
+                            _, _, _, _, inpainted_image, _, _, _ = images[current_idx]
+                        else:
+                            _, _, _, _, inpainted_image, _, _ = images[current_idx]
                         return inpainted_image
                     
                     # Connecter le bouton de réinitialisation
@@ -981,17 +1085,33 @@ with gr.Blocks() as interfaces:
                         outputs=[image_editor]
                     )
 
-                    # Résultats après traitement
-                    with gr.Row(visible=False) as results_row:
-                        final_image = gr.Image(
-                            label="Image traitée",
-                            type="pil",
-                            visible=True
-                        )
+                    # Résultats après traitement - Mettre les résultats en évidence
+                    gr.Markdown("### Image traitée - Validez le résultat avant de passer à l'image suivante")
+                    with gr.Row(visible=False, elem_classes=["results_display_row"]) as results_row:
+                        with gr.Column(scale=1):
+                            # Message explicatif
+                            gr.Markdown("""
+                            **👁️ Vérifiez le résultat ci-contre**
+                            
+                            Si l'image vous convient, cliquez sur "Image suivante" pour:
+                            1. Enregistrer cette image sur Shopify
+                            2. Mettre à jour le lien dans Google Sheets
+                            3. Passer à l'image suivante
+                            
+                            Si le résultat n'est pas satisfaisant, vous pouvez:
+                            - Modifier à nouveau le masque dans l'éditeur ci-dessus
+                            - Cliquer sur "Valider édition manuelle" pour réessayer
+                            """)
+                        
+                        with gr.Column(scale=2):
+                            final_image = gr.Image(
+                                label="Image traitée (résultat final)",
+                                type="pil",
+                                elem_classes=["final_image_display"],
+                                height=400,
+                                visible=True
+                            )
                 
-                    # Ajouter cette ligne juste ici
-                    results_visibility = gr.Checkbox(visible=False, label="Résultats visibles")
-            
             # Variables d'état pour gérer le flux de traitement
             current_image_index = gr.State(value=0)
             remaining_images = gr.State(value=[])
@@ -1033,8 +1153,8 @@ with gr.Blocks() as interfaces:
                     current_image_index,   # Composant State
                     remaining_images,      # Composant State
                     result_status,         # Composant Textbox
-                    final_image,           # Composant Image
-                    results_visibility     # Composant Checkbox au lieu de Row
+                    results_row,           # Visibilité de la rangée de résultats
+                    final_image            # Composant Image
                 ]
             )
             
@@ -1055,12 +1175,34 @@ with gr.Blocks() as interfaces:
                     current_image_index,   # Composant State
                     remaining_images,      # Composant State
                     result_status,         # Composant Textbox
-                    final_image,           # Composant Image
-                    results_visibility     # Composant Checkbox au lieu de Row
+                    results_row,           # Visibilité de la rangée de résultats
+                    final_image            # Composant Image
                 ]
             )
             
-            # Passer à l'édition manuelle
+            # Aussi connecter le bouton validate_edit_btn (qui est un duplicata de validate_edit)
+            validate_edit_btn.click(
+                process_edited_image,
+                inputs=[
+                    current_image_index,
+                    remaining_images,
+                    image_index,
+                    image_editor,
+                    image_editor,
+                    remove_bg_option,
+                    add_watermark_option,
+                    watermark_text
+                ],
+                outputs=[
+                    current_image_index,   # Composant State
+                    remaining_images,      # Composant State
+                    result_status,         # Composant Textbox
+                    results_row,           # Visibilité de la rangée de résultats
+                    final_image            # Composant Image
+                ]
+            )
+            
+            # Passer à l'édition manuelle et à l'image suivante
             skip_image.click(
                 next_image,
                 inputs=[current_image_index, remaining_images],
