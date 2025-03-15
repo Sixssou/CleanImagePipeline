@@ -36,84 +36,101 @@ class WatermakRemovalClient:
             httpx_kwargs=httpx_kwargs
         )
 
-    def remove_bg(self, image_input: Union[str, np.ndarray]):
+    def remove_bg(self, image_input: Image.Image):
         """
         Supprime l'arrière-plan d'une image.
         
         Args:
-            image_input: URL de l'image ou tableau numpy
+            image_input: objet PIL.Image
             
         Returns:
-            Image sans arrière-plan
+            Image avec l'arrière-plan supprimé
         """
         try:
-            # Si l'entrée est un tableau numpy, convertir en base64
-            if isinstance(image_input, np.ndarray):
-                # Convertir l'image numpy en base64
-                pil_img = Image.fromarray(image_input)
-                buffered = BytesIO()
-                pil_img.save(buffered, format="PNG")
-                img_str = base64.b64encode(buffered.getvalue()).decode()
-                
-                # Créer une URL temporaire en ligne (si possible)
-                try:
-                    # Essayer d'utiliser un service comme ImgBB pour héberger l'image temporairement
-                    # Ceci est juste un exemple, vous devrez peut-être utiliser un autre service
-                    api_key = os.getenv("IMGBB_API_KEY")
-                    if api_key:
-                        url = "https://api.imgbb.com/1/upload"
-                        payload = {
-                            "key": api_key,
-                            "image": img_str
-                        }
-                        response = requests.post(url, payload)
-                        if response.status_code == 200:
-                            data = response.json()
-                            image_url = data["data"]["url"]
-                            logger.info(f"Image téléchargée temporairement à {image_url}")
-                            input_for_api = image_url
-                        else:
-                            # Si l'upload échoue, utiliser une URL d'image par défaut
-                            logger.warning("Échec du téléchargement de l'image, utilisation de l'image d'origine")
-                            return image_input
-                    else:
-                        # Si pas de clé API, utiliser une URL d'image par défaut
-                        logger.warning("Pas de clé API pour ImgBB, utilisation de l'image d'origine")
-                        return image_input
-                except Exception as e:
-                    logger.error(f"Erreur lors du téléchargement de l'image: {str(e)}")
-                    return image_input
-            else:
-                # Utiliser l'URL directement
-                input_for_api = image_input
-                
-            # Obtenir le nom de l'API à partir des variables d'environnement
-            api_name = os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_REMOVE_BACKGROUND_FROM_URL")
-            logger.info(f"Appel à l'API remove_bg avec api_name={api_name}")
+            # Si l'entrée est un objet PIL.Image, le sauvegarder temporairement
+            temp_file = None
+            # Si l'entrée est un objet ndarray, le convertir
+            if isinstance(image_input, Image.Image):
+                from src.utils.image_utils import save_temp_image
+                temp_file = save_temp_image(image_input, prefix="bg_input")
+                image_input = temp_file
+            elif isinstance(image_input, np.ndarray):
+                from src.utils.image_utils import save_temp_image
+                img_pil = Image.fromarray(image_input.astype(np.uint8))
+                temp_file = save_temp_image(img_pil, prefix="bg_input")
+                image_input = temp_file
+            logger.info(f"image_input: {image_input}")
             
-            # Appel à l'API avec l'argument positionnel
+            # L'API attend un chemin de fichier, pas un objet PIL.Image
+            logger.info(f"Appel à l'API remove_bg avec api_name=/remove_background")
+            
+            # Utiliser l'API avec le chemin du fichier
             result = self.client.predict(
-                input_for_api,
-                api_name=api_name
+                handle_file(image_input),  # Chemin du fichier
+                api_name=os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_REMOVE_BACKGROUND")
             )
             
-            # Traiter le résultat
-            if isinstance(result, np.ndarray):
-                return result
-            elif isinstance(result, str) and os.path.exists(result):
-                # Charger l'image résultante
-                result_image = cv2.imread(result)
-                # Convertir de BGR à RGB (OpenCV charge en BGR)
-                result_image = cv2.cvtColor(result_image, cv2.COLOR_BGR2RGB)
-                return result_image
+            # Lire l'image résultante (résultat est un chemin de fichier)
+            if result is not None and isinstance(result, str) and os.path.exists(result):
+                return Image.open(result)
             else:
                 logger.warning(f"Type de résultat inattendu: {type(result)}")
-                return image_input
+                return None
                 
         except Exception as e:
             logger.error(f"Erreur lors de la suppression de l'arrière-plan: {str(e)}")
-            # Retourner l'image d'origine en cas d'erreur
-            return image_input
+            return None
+
+    def add_watermark(self, image_input: Image.Image, watermark: str, opacity: float = 0.2, grid_x: int = 10, grid_y: int = 10, angle: int = 45):
+        """
+        Ajoute un watermark à une image.
+        
+        Args:
+            image_input: objet PIL.Image
+            watermark: texte du watermark
+            
+        Returns:
+            Image avec le watermark ajouté
+        """
+        try:
+            # Si l'entrée est un objet PIL.Image, le sauvegarder temporairement
+            temp_file = None
+            # Si l'entrée est un objet ndarray, le convertir
+            if isinstance(image_input, Image.Image):
+                from src.utils.image_utils import save_temp_image
+                temp_file = save_temp_image(image_input, prefix="bg_input")
+                image_input = temp_file
+            elif isinstance(image_input, np.ndarray):
+                from src.utils.image_utils import save_temp_image
+                img_pil = Image.fromarray(image_input.astype(np.uint8))
+                temp_file = save_temp_image(img_pil, prefix="bg_input")
+                image_input = temp_file
+            logger.info(f"image_input: {image_input}")
+            
+            # L'API attend un chemin de fichier, pas un objet PIL.Image
+            logger.info(f"Appel à l'API apply_text_watermark_grid avec api_name={os.getenv('HF_SPACE_WATERMAK_REMOVAL_ROUTE_APPLY_TEXT_WATERMARK_GRID')}")
+            
+            # Utiliser l'API avec le chemin du fichier
+            result = self.client.predict(
+                handle_file(image_input),  # Chemin du fichier
+                watermark,
+                opacity,
+                grid_x,
+                grid_y,
+                angle,
+                api_name=os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_APPLY_TEXT_WATERMARK_GRID")
+            )
+            
+            # Lire l'image résultante (résultat est un chemin de fichier)
+            if result is not None and isinstance(result, str) and os.path.exists(result):
+                return Image.open(result)
+            else:
+                logger.warning(f"Type de résultat inattendu: {type(result)}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Erreur lors de l'ajout du watermark: {str(e)}")
+            return None
     
     def detect_wm(self, 
                   image_url: str, 
@@ -283,154 +300,47 @@ class WatermakRemovalClient:
         """
         logger.info("=== DÉBUT inpaint ===")
         logger.info(f"Type de input_image: {type(input_image)}")
+        
+        # Si l'entrée est un objet ndarray, le convertir
         if isinstance(input_image, Image.Image):
-            logger.info(f"Mode de input_image: {input_image.mode}, taille: {input_image.size}")
-            # Sauvegarder l'image d'entrée pour débogage
-            try:
-                debug_path = os.path.join(TEMP_DIR, f"debug_input_{uuid.uuid4()}.png")
-                input_image.save(debug_path)
-                logger.info(f"Image d'entrée sauvegardée pour débogage: {debug_path}")
-            except Exception as e:
-                logger.warning(f"Impossible de sauvegarder l'image d'entrée pour débogage: {e}")
-        
-        logger.info(f"Type de mask: {type(mask)}")
+            from src.utils.image_utils import save_temp_image
+            temp_file = save_temp_image(input_image, prefix="inpaint_input")
+            input_image = temp_file
+        elif isinstance(input_image, np.ndarray):
+            from src.utils.image_utils import save_temp_image
+            img_pil = Image.fromarray(input_image.astype(np.uint8))
+            temp_file = save_temp_image(img_pil, prefix="inpaint_input")
+            input_image = temp_file
+            
         if isinstance(mask, Image.Image):
-            logger.info(f"Mode de mask: {mask.mode}, taille: {mask.size}")
-            # Sauvegarder le masque pour débogage
-            try:
-                debug_path = os.path.join(TEMP_DIR, f"debug_mask_{uuid.uuid4()}.png")
-                mask.save(debug_path)
-                logger.info(f"Masque sauvegardé pour débogage: {debug_path}")
-            except Exception as e:
-                logger.warning(f"Impossible de sauvegarder le masque pour débogage: {e}")
+            from src.utils.image_utils import save_temp_image
+            temp_file = save_temp_image(mask, prefix="inpaint_mask")
+            mask = temp_file
+        elif isinstance(mask, np.ndarray):
+            from src.utils.image_utils import save_temp_image
+            img_pil = Image.fromarray(mask.astype(np.uint8))
+            temp_file = save_temp_image(img_pil, prefix="inpaint_mask")
+            mask = temp_file
             
-            # Analyser le contenu du masque pour détecter s'il y a des pixels non noirs (valeurs > 0)
-            if mask.mode == "L":
-                mask_array = np.array(mask)
-                non_black_pixels = np.sum(mask_array > 0)
-                total_pixels = mask_array.size
-                logger.info(f"Masque: {non_black_pixels} pixels non noirs sur {total_pixels} ({non_black_pixels/total_pixels*100:.2f}%)")
-                
-                # Afficher les valeurs uniques et leur fréquence dans le masque
-                unique_values, counts = np.unique(mask_array, return_counts=True)
-                logger.info(f"Valeurs uniques dans le masque: {list(zip(unique_values, counts))}")
-                
-                # Vérifier s'il y a trop peu de pixels non noirs (< 0.01% de l'image)
-                if non_black_pixels < total_pixels * 0.0001:
-                    logger.warning(f"ATTENTION: Le masque contient très peu de pixels non noirs ({non_black_pixels} pixels, {non_black_pixels/total_pixels*100:.4f}% de l'image)")
-                
-                # Vérifier si le masque est entièrement noir ou blanc
-                if len(unique_values) <= 2 and 0 in unique_values:
-                    if len(unique_values) == 1:  # Uniquement des zéros
-                        logger.warning("ATTENTION: Le masque est entièrement noir (tous les pixels sont à 0)")
-                    else:  # Deux valeurs: 0 et une autre
-                        non_zero_value = unique_values[1] if unique_values[0] == 0 else unique_values[0]
-                        logger.info(f"Le masque est binaire avec des valeurs 0 et {non_zero_value}")
-                else:
-                    logger.info(f"Le masque contient {len(unique_values)} valeurs différentes")
-        
-        # Vérifier que les entrées sont des images PIL
-        if not isinstance(input_image, Image.Image):
-            logger.error(f"L'image d'entrée n'est pas une instance de PIL.Image: {type(input_image)}")
-            return False, None
-        
-        if not isinstance(mask, Image.Image):
-            logger.error(f"Le masque n'est pas une instance de PIL.Image: {type(mask)}")
-            return False, None
-        
-        # Vérifier que les deux images ont la même taille
-        if input_image.size != mask.size:
-            logger.error(f"L'image et le masque n'ont pas la même taille: {input_image.size} vs {mask.size}")
-            # Redimensionner le masque pour correspondre à l'image
-            logger.info(f"Redimensionnement du masque pour correspondre à l'image...")
-            mask = mask.resize(input_image.size, Image.LANCZOS)
-            logger.info(f"Masque redimensionné: {mask.size}")
-        
+        # Appeler l'API d'inpainting avec le masque en utilisant file()
+        logger.info("Appel de l'API d'inpainting...")
         try:
-            # Préparer les images pour l'API
-            logger.info("Préparation des images pour l'API...")
-            try:
-                input_image_path = self._prepare_image_for_api(input_image, prefix="input_")
-                logger.info(f"Chemin de l'image d'entrée préparée: {input_image_path}")
-            except Exception as e:
-                logger.error(f"Erreur lors de la préparation de l'image d'entrée: {e}")
-                logger.exception(e)
-                raise
+            # Obtenir le nom de l'API à partir des variables d'environnement
+            api_name = os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_INPAINT_WITH_MASK", "/inpaint_with_mask")
+            logger.info(f"Utilisation de l'API: {api_name}")
             
-            try:
-                # S'assurer que le masque est en mode L (niveaux de gris)
-                if mask.mode != "L":
-                    logger.info(f"Conversion du masque du mode {mask.mode} au mode L")
-                    mask = mask.convert("L")
-                
-                mask_path = self._prepare_image_for_api(mask, prefix="mask_", is_mask=True)
-                logger.info(f"Chemin du masque préparé: {mask_path}")
-            except Exception as e:
-                logger.error(f"Erreur lors de la préparation du masque: {e}")
-                logger.exception(e)
-                raise
-            
-            logger.info(f"Chemins préparés: input_image_path={input_image_path}, mask_path={mask_path}")
-            
-            # Importer file de gradio_client pour l'envoi de fichiers
-            from gradio_client import file
-            
-            # Vérifier que les chemins existent
-            if not os.path.exists(input_image_path):
-                logger.error(f"Le chemin de l'image d'entrée n'existe pas: {input_image_path}")
-                return False, None
-            
-            if not os.path.exists(mask_path):
-                logger.error(f"Le chemin du masque n'existe pas: {mask_path}")
-                return False, None
-            
-            # Appeler l'API d'inpainting avec le masque en utilisant file()
-            logger.info("Appel de l'API d'inpainting...")
-            try:
-                # Obtenir le nom de l'API à partir des variables d'environnement
-                api_name = os.getenv("HF_SPACE_WATERMAK_REMOVAL_ROUTE_INPAINT_WITH_MASK", "/inpaint_with_mask")
-                logger.info(f"Utilisation de l'API: {api_name}")
-                
-                result = self.client.predict(
-                    file(input_image_path),  # Utiliser file() pour envoyer le fichier
-                    file(mask_path),         # Utiliser file() pour envoyer le fichier
-                    api_name=api_name
-                )
-                logger.info(f"Résultat de l'API: {result}")
-            except Exception as e:
-                logger.error(f"Erreur lors de l'appel à l'API d'inpainting: {e}")
-                logger.exception(e)
-                return False, None
-            
-            # Vérifier si le résultat est valide
-            if result is not None and isinstance(result, str) and os.path.exists(result):
-                # Charger l'image résultante
-                logger.info(f"Chargement de l'image résultante: {result}")
-                try:
-                    result_image = np.array(Image.open(result))
-                    logger.info(f"Image résultante chargée, forme: {result_image.shape}")
-                    logger.info("=== FIN inpaint (succès) ===")
-                    return True, result_image
-                except Exception as e:
-                    logger.error(f"Erreur lors du chargement de l'image résultante: {e}")
-                    logger.exception(e)
-                    return False, None
-            else:
-                if result is None:
-                    logger.error("L'API a retourné None")
-                elif not isinstance(result, str):
-                    logger.error(f"L'API a retourné un type inattendu: {type(result)}")
-                else:
-                    logger.error(f"Le fichier de résultat n'existe pas: {result}")
-                return False, None
-                
+            result = self.client.predict(
+                handle_file(input_image),  # Utiliser file() pour envoyer le fichier
+                handle_file(mask),         # Utiliser file() pour envoyer le fichier
+                api_name=api_name
+            )
+            logger.info(f"Résultat de l'API: {result}")
         except Exception as e:
-            logger.error(f"Erreur inattendue lors de l'inpainting: {e}")
+            logger.error(f"Erreur lors de l'appel à l'API d'inpainting: {e}")
             logger.exception(e)
             return False, None
         
-        logger.info("=== FIN inpaint (échec) ===")
-        return False, None
+        return True, result
 
     def _prepare_image_for_api(self, image, prefix="img_", is_mask=False):
         """
@@ -643,7 +553,7 @@ class WatermakRemovalClient:
         except Exception as e:
             logger.error(f"Erreur lors de la détection et de l'inpainting: {str(e)}")
             raise Exception(f"Erreur lors de la détection et de l'inpainting: {str(e)}")
-    
+
     def view_api(self) -> dict:
         """
         Récupère les informations sur l'API en appelant la méthode view_api du client Gradio.
@@ -661,3 +571,17 @@ class WatermakRemovalClient:
             # Renvoyer un dictionnaire vide en cas d'erreur
             return {"error": f"Impossible d'accéder aux informations de l'API: {str(e)}"}
     
+def main():
+    """
+    Fonction principale pour créer un WatermakRemovalClient et appeler view_api.
+    """
+    # Initialiser le client
+    space_url = os.getenv("WATERMAK_REMOVAL_SPACE_URL", "https://cyrilar-watermak-removal.hf.space")
+    hf_token = os.getenv("HF_TOKEN")
+    logger.info(f"Initialisation du client avec space_url={space_url}")
+    client = WatermakRemovalClient(hf_token=hf_token, space_url=space_url)
+    
+    # Afficher les informations sur l'API
+    api_info = client.view_api()
+    print("=== Informations sur l'API d'inpainting ===")
+    print(api_info)

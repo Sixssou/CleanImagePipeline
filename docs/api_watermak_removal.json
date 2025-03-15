@@ -1,0 +1,335 @@
+{
+  "nombre_endpoints": 10,
+  "endpoints": {
+    "remove_background": {
+      "route": "/remove_background",
+      "méthode": "predict",
+      "paramètres": {
+        "image_dentrée": {
+          "type": "Image",
+          "format": "filepath",
+          "requis": true
+        }
+      },
+      "retourne": {
+        "image_sans_arrièreplan": {
+          "type": "Image",
+          "format": "filepath"
+        }
+      }
+    },
+    "remove_background_from_url": {
+      "route": "/remove_background_from_url",
+      "méthode": "predict",
+      "paramètres": {
+        "url_de_limage": {
+          "type": "Textbox",
+          "format": "str",
+          "requis": true
+        }
+      },
+      "retourne": {
+        "image_sans_arrièreplan": {
+          "type": "Image",
+          "format": "filepath"
+        }
+      }
+    },
+    "detect_watermarks": {
+      "route": "/detect_watermarks",
+      "méthode": "predict",
+      "paramètres": {
+        "image_dentrée": {
+          "type": "Image",
+          "format": "filepath",
+          "requis": true
+        },
+        "prompt": {
+          "type": "Textbox",
+          "format": "str",
+          "requis": true
+        },
+        "nombre_de_tokens_maximum": {
+          "type": "Slider",
+          "format": "float",
+          "min": 256,
+          "max": 10000,
+          "requis": true
+        },
+        "early_stopping": {
+          "type": "Checkbox",
+          "format": "bool",
+          "requis": true
+        },
+        "do_sample": {
+          "type": "Checkbox",
+          "format": "bool",
+          "requis": true
+        },
+        "nombre_de_beams": {
+          "type": "Slider",
+          "format": "float",
+          "min": 1,
+          "max": 100,
+          "requis": true
+        },
+        "nombre_de_séquences_à_retourner": {
+          "type": "Slider",
+          "format": "float",
+          "min": 1,
+          "max": 100,
+          "requis": true
+        },
+        "température": {
+          "type": "Slider",
+          "format": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "requis": true
+        },
+        "top_k": {
+          "type": "Slider",
+          "format": "float",
+          "min": 1,
+          "max": 100,
+          "requis": true
+        },
+        "top_p": {
+          "type": "Slider",
+          "format": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "requis": true
+        },
+        "penalité_de_répétition": {
+          "type": "Slider",
+          "format": "float",
+          "min": 0.0,
+          "max": 10.0,
+          "requis": true
+        },
+        "penalité_de_longueur": {
+          "type": "Slider",
+          "format": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "requis": true
+        },
+        "maximal_bbox_percent": {
+          "type": "Slider",
+          "format": "float",
+          "min": 1,
+          "max": 100,
+          "requis": true
+        },
+        "facteur_dagrandissement_des_bbox": {
+          "type": "Slider",
+          "format": "float",
+          "min": 1,
+          "max": 10,
+          "requis": true
+        }
+      },
+      "retourne": {
+        "detections": {
+          "type": "Image",
+          "format": "filepath"
+        },
+        "détections_extrapolées": {
+          "type": "Image",
+          "format": "filepath"
+        },
+        "masque": {
+          "type": "Image",
+          "format": "filepath"
+        }
+      }
+    },
+    "inpaint_with_mask": {
+      "route": "/inpaint_with_mask",
+      "méthode": "predict",
+      "paramètres": {
+        "image_dentrée": {
+          "type": "Image",
+          "format": "filepath",
+          "requis": true
+        },
+        "masque_zones_blanches__à_traiter": {
+          "type": "Image",
+          "format": "filepath",
+          "requis": true
+        }
+      },
+      "retourne": {
+        "image_traitée": {
+          "type": "Image",
+          "format": "filepath"
+        }
+      }
+    },
+    "inpaint_image": {
+      "route": "/inpaint_image",
+      "méthode": "predict",
+      "paramètres": {
+        "image_dentrée": {
+          "type": "Image",
+          "format": "filepath",
+          "requis": true
+        },
+        "seuil_de_confiance": {
+          "type": "Slider",
+          "format": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "requis": true
+        },
+        "maximal_bbox_percent": {
+          "type": "Slider",
+          "format": "float",
+          "min": 1,
+          "max": 100,
+          "requis": true
+        },
+        "nombre_ditérations_dinpainting": {
+          "type": "Slider",
+          "format": "float",
+          "min": 1,
+          "max": 10,
+          "requis": true
+        }
+      },
+      "retourne": {
+        "masque_de_détection": {
+          "type": "Image",
+          "format": "filepath"
+        },
+        "image_traitée": {
+          "type": "Image",
+          "format": "filepath"
+        }
+      }
+    },
+    "remove_watermarks": {
+      "route": "/remove_watermarks",
+      "méthode": "predict",
+      "paramètres": {
+        "image_à_nettoyer": {
+          "type": "Image",
+          "format": "filepath",
+          "requis": true
+        },
+        "seuil_de_confiance": {
+          "type": "Slider",
+          "format": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "requis": true
+        },
+        "maximal_bbox_percent": {
+          "type": "Slider",
+          "format": "float",
+          "min": 1,
+          "max": 100,
+          "requis": true
+        },
+        "supprimer_larrièreplan": {
+          "type": "Checkbox",
+          "format": "bool",
+          "requis": true
+        },
+        "ajoute_un_watermark": {
+          "type": "Checkbox",
+          "format": "bool",
+          "requis": true
+        },
+        "watermark_à_ajouter": {
+          "type": "Textbox",
+          "format": "str",
+          "requis": true
+        },
+        "facteur_dagrandissement_des_bbox": {
+          "type": "Slider",
+          "format": "float",
+          "min": 1,
+          "max": 10,
+          "requis": true
+        },
+        "nombre_ditérations_dinpainting": {
+          "type": "Slider",
+          "format": "float",
+          "min": 1,
+          "max": 10,
+          "requis": true
+        }
+      },
+      "retourne": {
+        "aperçu_de_la_suppression_de_larrièreplan": {
+          "type": "Image",
+          "format": "filepath"
+        },
+        "aperçu_de_la_détection": {
+          "type": "Image",
+          "format": "filepath"
+        },
+        "masque_généré": {
+          "type": "Image",
+          "format": "filepath"
+        },
+        "image_nettoyée": {
+          "type": "Image",
+          "format": "filepath"
+        }
+      }
+    },
+    "apply_text_watermark_grid": {
+      "route": "/apply_text_watermark_grid",
+      "méthode": "predict",
+      "paramètres": {
+        "image_de_base": {
+          "type": "Image",
+          "format": "filepath",
+          "requis": true
+        },
+        "texte_du_watermark": {
+          "type": "Textbox",
+          "format": "str",
+          "requis": true
+        },
+        "opacité_du_texte": {
+          "type": "Slider",
+          "format": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "requis": true
+        },
+        "nombre_total_de_watermarks": {
+          "type": "Slider",
+          "format": "float",
+          "min": 1,
+          "max": 20,
+          "requis": true
+        },
+        "taille_du_texte_ratio_de_la_largeur": {
+          "type": "Slider",
+          "format": "float",
+          "min": 0.01,
+          "max": 1,
+          "requis": true
+        },
+        "angle_de_rotation_degrés": {
+          "type": "Slider",
+          "format": "float",
+          "min": -180,
+          "max": 180,
+          "requis": true
+        }
+      },
+      "retourne": {
+        "image_avec_watermark_grille": {
+          "type": "Image",
+          "format": "filepath"
+        }
+      }
+    }
+  }
+} 

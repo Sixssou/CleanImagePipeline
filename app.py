@@ -18,7 +18,7 @@ from src.clients.gsheet_client import GSheetClient
 from src.clients.shopify_client import ShopifyClient
 from src.clients.watermak_removal_client import WatermakRemovalClient
 from src.pipeline.pipeline import CleanImagePipeline
-from src.utils.image_utils import download_image, visualize_mask, TEMP_DIR
+from src.utils.image_utils import download_image, visualize_mask, TEMP_DIR, save_temp_image
 
 # Définir TEMP_DIR au début du fichier, après les imports
 TEMP_DIR = os.path.join(tempfile.gettempdir(), "cleanimage")
@@ -546,28 +546,58 @@ def validate_automatic_processing(current_idx, images, remove_bg_option=False, a
         
         # Convertir en PIL.Image si nécessaire
         if isinstance(result_image, np.ndarray):
-            result_image = Image.fromarray(result_image)
+            result_image = Image.fromarray(result_image.astype(np.uint8))
         elif isinstance(result_image, str) and os.path.exists(result_image):
             result_image = Image.open(result_image)
         
-        # Supprimer l'arrière-plan si demandé
+        # Application de la suppression d'arrière-plan
         if remove_bg_option:
             logger.info("Application de la suppression d'arrière-plan")
             success, no_bg_image = pipeline.image_processor.remove_background(result_image)
-            if success and no_bg_image is not None:
+            if success:
+                logger.info("Suppression d'arrière-plan réussie")
                 result_image = no_bg_image
+            else:
+                logger.warning("Échec de la suppression d'arrière-plan, utilisation de l'image originale")
         
-        # Ajouter le filigrane si demandé
+        # Ajout du filigrane
         if add_watermark_option and watermark_text:
             logger.info(f"Ajout du filigrane: {watermark_text}")
             watermarked_image = pipeline.image_processor.add_watermark(result_image, watermark_text)
             if watermarked_image is not None:
+                logger.info("Ajout du filigrane réussi")
                 result_image = watermarked_image
+            else:
+                logger.warning("Échec de l'ajout du filigrane, utilisation de l'image sans filigrane")
         
-        # Sauvegarder le résultat
-        unique_id = uuid.uuid4()
-        result_path = os.path.join(TEMP_DIR, f"result_{unique_id}.png")
-        result_image.save(result_path)
+        # Utiliser la fonction temporaire au lieu de save_temp_image si l'import n'est pas possible
+        if 'save_temp_image' not in globals():
+            # Fonction temporaire de sauvegarde si l'import ne fonctionne pas
+            def temp_save_image(image, prefix="img"):
+                import os
+                import uuid
+                import tempfile
+                from PIL import Image
+                
+                # Créer le répertoire temporaire
+                temp_dir = os.path.join(tempfile.gettempdir(), "cleanimage")
+                os.makedirs(temp_dir, exist_ok=True)
+                
+                # Générer un nom unique
+                unique_id = uuid.uuid4()
+                output_path = os.path.join(temp_dir, f"{prefix}_{unique_id}.png")
+                
+                # Sauvegarder l'image
+                image.save(output_path)
+                return output_path
+                
+            # Utiliser la fonction temporaire
+            result_path = temp_save_image(result_image, prefix="result")
+        else:
+            # Utiliser la fonction importée
+            result_path = save_temp_image(result_image, prefix="result")
+            
+        logger.info(f"Retour de l'image résultante pour affichage: {result_path}")
         
         if result_path:
             # Mise à jour de l'image traitée dans la liste
@@ -576,15 +606,15 @@ def validate_automatic_processing(current_idx, images, remove_bg_option=False, a
             images[current_idx] = (idx, image_url, original_image, mask, inpainted_image, result_path, remove_bg_option, True)
             
             # Retourner l'image résultante pour l'affichage
-            logger.info(f"Retour de l'image résultante pour affichage: {result_path}")
             return current_idx, images, "Traitement terminé. Vérifiez l'image et cliquez sur 'Image suivante' pour valider.", gr.update(visible=True), result_image
         else:
             return current_idx, images, "Le traitement a échoué", gr.update(visible=False), None
     
     except Exception as e:
         logger.error(f"Erreur lors de la validation du traitement automatique: {str(e)}")
-        logger.exception(e)
-        return current_idx, images, f"Erreur: {str(e)}", gr.update(visible=False), None
+        logger.error(f"{str(e)}")
+        # Gérer l'erreur ou lever une exception
+        raise
 
 def next_image(current_idx, images):
     """
@@ -932,7 +962,7 @@ with gr.Blocks() as interfaces:
                     inputs=[input_image_url_remove_background],
                     outputs=[output_remove_background]
                 )
-            
+
             with gr.Accordion("Watermark Detection"):
                 with gr.Row():
                     with gr.Column():
