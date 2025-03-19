@@ -116,7 +116,7 @@ class ImageProcessor:
         Supprime l'arrière-plan d'une image et retourne un tuple (succès, image).
         
         Args:
-            image_input: URL de l'image, chemin local ou tableau numpy/PIL Image
+            image_input: chemin local
             
         Returns:
             tuple: (bool, PIL.Image) Statut de succès et image avec l'arrière-plan supprimé
@@ -127,29 +127,16 @@ class ImageProcessor:
                 logger.error("Le client WatermakRemoval n'est pas initialisé")
                 return False, image_input
             
-            # Convertir en image PIL si nécessaire pour conserver l'image originale en cas d'échec
-            if isinstance(image_input, np.ndarray):
-                input_pil = Image.fromarray(image_input.astype(np.uint8))
-            elif isinstance(image_input, Image.Image):
-                input_pil = image_input.copy()
-            else:
-                # Supposer que c'est une URL ou un chemin
-                try:
-                    input_pil = download_image(image_input)
-                except Exception as e:
-                    logger.error(f"Erreur lors du téléchargement de l'image: {str(e)}")
-                    return False, image_input
-            
             # Log de l'appel à remove_bg
-            logger.info(f"Appel de remove_bg avec l'image: {type(input_pil)}")
+            logger.info(f"Appel de remove_bg avec l'image: {type(image_input)}")
             
             # Appeler l'API
-            result = self.watermak_removal_client.remove_bg(input_pil)
+            result = self.watermak_removal_client.remove_bg(image_input)
             
             # Si le résultat est None, retourner l'image d'origine
             if result is None:
                 logger.error("La suppression de l'arrière-plan a échoué, API a retourné None")
-                return False, input_pil
+                return False, image_input
             
             # Sinon, retourner le résultat
             return True, result
@@ -259,7 +246,7 @@ class ImageProcessor:
             # Sauvegarder le résultat
             result_path = save_temp_image(processed_img, prefix="result")
             
-            return input_path, mask_path, result_path
+            return inpainted_image, edited_mask, result_path
         
         except Exception as e:
             logger.error(f"Erreur lors de l'application des modifications manuelles: {str(e)}")

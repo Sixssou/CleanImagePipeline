@@ -47,14 +47,22 @@ class WatermakRemovalClient:
             Image avec l'arrière-plan supprimé
         """
         try:
+            # Si l'entrée est un tuple (success, path) provenant d'une autre fonction
+            if isinstance(image_input, tuple) and len(image_input) == 2:
+                success, file_path = image_input
+                if success and isinstance(file_path, str):
+                    image_input = file_path
+                    logger.info(f"Extraction du chemin de fichier depuis le tuple: {image_input}")
             # Si l'entrée est un objet PIL.Image, le sauvegarder temporairement
             temp_file = None
             # Si l'entrée est un objet ndarray, le convertir
             if isinstance(image_input, Image.Image):
+                logger.info(f"image_input of type Image.Image: {image_input}")
                 from src.utils.image_utils import save_temp_image
                 temp_file = save_temp_image(image_input, prefix="bg_input")
                 image_input = temp_file
             elif isinstance(image_input, np.ndarray):
+                logger.info(f"image_input of type np.ndarray: {image_input}")
                 from src.utils.image_utils import save_temp_image
                 img_pil = Image.fromarray(image_input.astype(np.uint8))
                 temp_file = save_temp_image(img_pil, prefix="bg_input")
@@ -62,7 +70,7 @@ class WatermakRemovalClient:
             logger.info(f"image_input: {image_input}")
             
             # L'API attend un chemin de fichier, pas un objet PIL.Image
-            logger.info(f"Appel à l'API remove_bg avec api_name=/remove_background")
+            logger.info(f"Appel à l'API remove_bg avec api_name={os.getenv('HF_SPACE_WATERMAK_REMOVAL_ROUTE_REMOVE_BACKGROUND')}")
             
             # Utiliser l'API avec le chemin du fichier
             result = self.client.predict(
